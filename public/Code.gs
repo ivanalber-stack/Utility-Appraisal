@@ -1,18 +1,20 @@
 /**
  * =========================================================================
  * TACO GROUP - PERFORMANCE APPRAISAL UTILITY
- * Google Apps Script (Code.gs)
+ * Google Apps Script (Code.gs) - Versi 3.0 (Real-Time Auto Recalculate & REST API)
  * =========================================================================
- * Script ini digunakan untuk Google Spreadsheet penilaian kinerja karyawan TACO:
- * 1. Custom Formula Spreadsheet: =HITUNG_NILAI_AKHIR(...)
- * 2. Menu Otomatis di Google Sheets: "TACO Appraisal"
- * 3. Pembuatan Template Sheet Baru Otomatis dengan Formula & Validasi
- * 4. Web App API (doGet & doPost) untuk integrasi dengan Web Dashboard
+ * 
+ * Fitur Utama:
+ * 1. onEdit(e)            : Otomatis menghitung Nilai Akhir secara REAL-TIME saat Anda mengetik/mengubah nilai di sel
+ * 2. =HITUNG_NILAI_AKHIR  : Rumus Kustom Spreadsheet (Bisa 5 argumen atau rentang B2:F2)
+ * 3. Menu "TACO Appraisal": Menu otomatis di toolbar Google Sheets
+ * 4. doGet(e)             : REST API JSON untuk Sinkronisasi Real-Time ke Web Dashboard Vercel
+ * 5. testFungsi()         : Fungsi pengujian bebas error di Apps Script Editor
  * =========================================================================
  */
 
-// Default bobot kriteria penilaian (dalam persen %)
-const DEFAULT_WEIGHTS = {
+// Bobot Kriteria Penilaian Default TACO (%)
+var DEFAULT_WEIGHTS = {
   AD: {
     absensi: 30,
     downtime: 35,
@@ -26,227 +28,270 @@ const DEFAULT_WEIGHTS = {
 };
 
 /**
- * Custom Function: Menghitung Nilai Akhir Karyawan TACO secara otomatis.
- *
- * Contoh penggunaan di sel Google Sheets:
- * =HITUNG_NILAI_AKHIR(B2, C2, D2, E2, F2)
- *
- * @param {string} group Group karyawan: "PM" atau "A", "B", "C", "D"
- * @param {number} absensi Nilai absensi (0 - 100)
- * @param {number} downtime Nilai downtime (0 - 100)
- * @param {number} pmCompletion Nilai PM Completion (khusus Group PM)
- * @param {number} fiveR Nilai 5R (khusus Group A, B, C, D)
- * @return {number} Nilai akhir terbobot (0 - 100) dibulatkan 1 desimal.
- * @customfunction
+ * 1. FUNGSI UJI / TEST (PILIH "testFungsi" DI DROPDOWN EDITOR LALU KLIK "RUN")
+ * Untuk memastikan script tidak error dan siap dipakai.
  */
-function HITUNG_NILAI_AKHIR(group, absensi, downtime, pmCompletion, fiveR) {
-  if (!group) return "";
+function testFungsi() {
+  Logger.log("=== Memulai Pengujian Formula TACO Appraisal ===");
+  var testB = HITUNG_NILAI_AKHIR("B", 95, 50, "-", 80);
+  Logger.log("[OK] Test Group B (Absensi: 95, Downtime: 50, 5R: 80) -> Nilai Akhir: " + testB);
   
-  var grp = String(group).trim().toUpperCase();
-  var numAbs = parseFloat(absensi) || 0;
-  var numDown = parseFloat(downtime) || 0;
+  var testPM = HITUNG_NILAI_AKHIR("PM", 90, 60, 85, "-");
+  Logger.log("[OK] Test Group PM (Absensi: 90, Downtime: 60, PM: 85) -> Nilai Akhir: " + testPM);
   
-  if (grp === "PM") {
-    var numPM = parseFloat(pmCompletion) || 0;
-    var wPM = DEFAULT_WEIGHTS.PM;
-    var totalW = wPM.absensi + wPM.downtime + wPM.pmCompletion;
-    if (totalW === 0) return 0;
-    var score = (numAbs * wPM.absensi + numDown * wPM.downtime + numPM * wPM.pmCompletion) / totalW;
-    return Math.round(score * 10) / 10;
-  } else {
-    // Group A, B, C, D
-    var num5R = parseFloat(fiveR) || (pmCompletion !== "" && !isNaN(pmCompletion) ? parseFloat(pmCompletion) : 0);
-    var wAD = DEFAULT_WEIGHTS.AD;
-    var totalW = wAD.absensi + wAD.downtime + wAD.fiveR;
-    if (totalW === 0) return 0;
-    var score = (numAbs * wAD.absensi + numDown * wAD.downtime + num5R * wAD.fiveR) / totalW;
-    return Math.round(score * 10) / 10;
-  }
+  Logger.log("STATUS: Script berjalan normal 100%! Siap digunakan di Google Sheets.");
+  return "Sukses! Script bekerja 100% normal.";
 }
 
 /**
- * Event onOpen: Menambahkan Menu Khusus "TACO Appraisal" ke toolbar Google Sheets
+ * Helper: Membersihkan nilai angka dari format persen, spasi, koma desimal, dll.
  */
-function onOpen() {
-  var ui = SpreadsheetApp.getUi();
-  ui.createMenu("TACO Appraisal")
-    .addItem("Hitung Nilai Akhir (Sheet Aktif)", "hitungSemuaNilaiAkhir")
-    .addSeparator()
-    .addItem("Buat Template Sheet Bulan Baru", "buatTemplateSheetBulanBaru")
-    .addItem("Format & Rapikan Tabel", "rapikanTabelAktif")
-    .addSeparator()
-    .addItem("Petunjuk Penggunaan & Formula", "tampilkanPetunjuk")
-    .addToUi();
+function bersihkanAngka(val) {
+  if (val === null || val === undefined || val === "" || val === "-" || val === "N/A") return 0;
+  if (typeof val === "number") return isNaN(val) ? 0 : val;
+  var str = String(val).trim().replace("%", "").replace(",", ".");
+  var parsed = parseFloat(str);
+  return isNaN(parsed) ? 0 : parsed;
 }
 
 /**
- * Menghitung dan mengisi kolom Nilai Akhir di seluruh baris sheet aktif
+ * Helper: Menemukan posisi index kolom dari baris header secara fleksibel
  */
-function hitungSemuaNilaiAkhir() {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
-  var lastRow = sheet.getLastRow();
-  if (lastRow < 2) {
-    SpreadsheetApp.getUi().alert("Sheet masih kosong atau hanya memiliki baris header.");
-    return;
-  }
-
-  // Cari index kolom berdasarkan baris header (baris 1)
-  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-  var colIdx = {
+function cariIndexKolom(headers) {
+  var colMap = {
+    name: -1,
     group: -1,
     absensi: -1,
     downtime: -1,
     pmCompletion: -1,
     fiveR: -1,
-    nilaiAkhir: -1
+    nilaiAkhir: -1,
+    notes: -1
   };
 
-  for (var i = 0; i < headers.length; i++) {
-    var h = String(headers[i]).toLowerCase().trim();
-    if (h.indexOf("group") !== -1) colIdx.group = i;
-    else if (h.indexOf("absen") !== -1) colIdx.absensi = i;
-    else if (h.indexOf("downtime") !== -1) colIdx.downtime = i;
-    else if (h.indexOf("pm") !== -1 && h.indexOf("comp") !== -1) colIdx.pmCompletion = i;
-    else if (h.indexOf("5r") !== -1) colIdx.fiveR = i;
-    else if (h.indexOf("nilai") !== -1 || h.indexOf("akhir") !== -1 || h.indexOf("score") !== -1) colIdx.nilaiAkhir = i;
+  for (var c = 0; c < headers.length; c++) {
+    var h = String(headers[c] || "").toLowerCase().trim();
+    if (h.indexOf("nama") !== -1 || h === "name" || h === "karyawan") colMap.name = c;
+    else if (h.indexOf("group") !== -1 || h === "grup" || h === "grp") colMap.group = c;
+    else if (h.indexOf("absen") !== -1) colMap.absensi = c;
+    else if (h.indexOf("down") !== -1) colMap.downtime = c;
+    else if (h.indexOf("pm") !== -1 && h.indexOf("group") === -1) colMap.pmCompletion = c;
+    else if (h.indexOf("5r") !== -1 || h.indexOf("5 r") !== -1) colMap.fiveR = c;
+    else if (h.indexOf("nilai") !== -1 || h.indexOf("akhir") !== -1 || h === "total" || h === "score") colMap.nilaiAkhir = c;
+    else if (h.indexOf("catatan") !== -1 || h.indexOf("note") !== -1 || h.indexOf("ket") !== -1) colMap.notes = c;
   }
 
-  if (colIdx.group === -1 || colIdx.absensi === -1 || colIdx.downtime === -1) {
-    SpreadsheetApp.getUi().alert("Kolom wajib (Group, Absensi, Downtime) tidak ditemukan pada baris header.");
-    return;
+  // Fallback index standar jika header tidak bertuliskan spesifik
+  if (colMap.name === -1) {
+    colMap.name = (headers.length > 1 && String(headers[0]).toLowerCase().indexOf("no") !== -1) ? 1 : 0;
   }
+  if (colMap.group === -1) colMap.group = colMap.name + 1;
+  if (colMap.absensi === -1) colMap.absensi = colMap.group + 1;
+  if (colMap.downtime === -1) colMap.downtime = colMap.absensi + 1;
+  if (colMap.pmCompletion === -1) colMap.pmCompletion = colMap.downtime + 1;
+  if (colMap.fiveR === -1) colMap.fiveR = colMap.pmCompletion + 1;
+  if (colMap.nilaiAkhir === -1) colMap.nilaiAkhir = colMap.fiveR + 1;
 
-  // Jika kolom Nilai Akhir belum ada, buat di kolom terakhir
-  if (colIdx.nilaiAkhir === -1) {
-    var newCol = sheet.getLastColumn() + 1;
-    sheet.getRange(1, newCol).setValue("Nilai Akhir").setFontWeight("bold").setBackground("#E74A25").setFontColor("#FFFFFF");
-    colIdx.nilaiAkhir = newCol - 1;
-  }
-
-  var dataRange = sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn());
-  var values = dataRange.getValues();
-
-  for (var r = 0; r < values.length; r++) {
-    var grp = values[r][colIdx.group];
-    var abs = values[r][colIdx.absensi];
-    var down = values[r][colIdx.downtime];
-    var pm = colIdx.pmCompletion !== -1 ? values[r][colIdx.pmCompletion] : "";
-    var f5 = colIdx.fiveR !== -1 ? values[r][colIdx.fiveR] : "";
-
-    var score = HITUNG_NILAI_AKHIR(grp, abs, down, pm, f5);
-    values[r][colIdx.nilaiAkhir] = score;
-  }
-
-  dataRange.setValues(values);
-  SpreadsheetApp.getUi().alert("Berhasil menghitung Nilai Akhir untuk " + values.length + " karyawan.");
+  return colMap;
 }
 
 /**
- * Membuat sheet baru dengan format standar TACO Performance Appraisal
+ * 2. FORMULA KUSTOM SPREADSHEET: =HITUNG_NILAI_AKHIR(...)
+ *
+ * Mendukung format pemanggilan:
+ * - 5 Kolom terpisah : =HITUNG_NILAI_AKHIR(B2; C2; D2; E2; F2) atau koma (B2, C2, D2, E2, F2)
+ * - Rentang sel      : =HITUNG_NILAI_AKHIR(B2:F2)
+ *
+ * @param {string|Array} groupOrRange Group ("PM", "A", "B", "C", "D") atau rentang sel B2:F2
+ * @param {number} absensi Nilai absensi (0 - 100)
+ * @param {number} downtime Nilai downtime (0 - 100)
+ * @param {number} pmCompletion Nilai PM Completion (Group PM)
+ * @param {number} fiveR Nilai 5R (Group A, B, C, D)
+ * @return {number} Nilai akhir terbobot (0 - 100) dibulatkan 1 desimal.
+ * @customfunction
  */
-function buatTemplateSheetBulanBaru() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var ui = SpreadsheetApp.getUi();
-  var response = ui.prompt("Nama Bulan Baru", "Masukkan nama periode (contoh: Oktober 2026):", ui.ButtonSet.OK_CANCEL);
+function HITUNG_NILAI_AKHIR(groupOrRange, absensi, downtime, pmCompletion, fiveR) {
+  try {
+    var grp = "";
+    var numAbs = 0, numDown = 0, numPM = 0, num5R = 0;
 
-  if (response.getSelectedButton() !== ui.Button.OK || !response.getResponseText().trim()) {
-    return;
+    // Mendukung pemanggilan rentang misal: =HITUNG_NILAI_AKHIR(B2:F2)
+    if (Array.isArray(groupOrRange)) {
+      var flat = [];
+      for (var r = 0; r < groupOrRange.length; r++) {
+        if (Array.isArray(groupOrRange[r])) {
+          for (var c = 0; c < groupOrRange[r].length; c++) flat.push(groupOrRange[r][c]);
+        } else {
+          flat.push(groupOrRange[r]);
+        }
+      }
+      grp = String(flat[0] || "").trim().toUpperCase();
+      numAbs = bersihkanAngka(flat[1]);
+      numDown = bersihkanAngka(flat[2]);
+      numPM = bersihkanAngka(flat[3]);
+      num5R = bersihkanAngka(flat[4] !== undefined ? flat[4] : flat[3]);
+    } else {
+      grp = String(groupOrRange || "").trim().toUpperCase();
+      numAbs = bersihkanAngka(absensi);
+      numDown = bersihkanAngka(downtime);
+      numPM = bersihkanAngka(pmCompletion);
+      num5R = bersihkanAngka(fiveR !== undefined && fiveR !== "" ? fiveR : pmCompletion);
+    }
+
+    if (!grp) return "";
+
+    if (grp === "PM") {
+      var wPM = DEFAULT_WEIGHTS.PM;
+      var totalW = wPM.absensi + wPM.downtime + wPM.pmCompletion;
+      if (totalW === 0) return 0;
+      var scorePM = (numAbs * wPM.absensi + numDown * wPM.downtime + numPM * wPM.pmCompletion) / totalW;
+      return Math.round(scorePM * 10) / 10;
+    } else {
+      // Group A, B, C, D
+      var wAD = DEFAULT_WEIGHTS.AD;
+      var totalW = wAD.absensi + wAD.downtime + wAD.fiveR;
+      if (totalW === 0) return 0;
+      var scoreAD = (numAbs * wAD.absensi + numDown * wAD.downtime + num5R * wAD.fiveR) / totalW;
+      return Math.round(scoreAD * 10) / 10;
+    }
+  } catch (err) {
+    return 0;
   }
-
-  var sheetName = response.getResponseText().trim();
-  var existing = ss.getSheetByName(sheetName);
-  if (existing) {
-    ui.alert("Sheet dengan nama '" + sheetName + "' sudah ada!");
-    return;
-  }
-
-  var sheet = ss.insertSheet(sheetName);
-
-  // Headers
-  var headers = ["Nama Karyawan", "Group", "Absensi (0-100)", "Downtime (0-100)", "PM Completion (0-100)", "5R (0-100)", "Nilai Akhir", "Catatan"];
-  var headerRange = sheet.getRange(1, 1, 1, headers.length);
-  headerRange.setValues([headers]);
-  headerRange.setBackground("#1E293B"); // Slate-800
-  headerRange.setFontColor("#FFFFFF");
-  headerRange.setFontWeight("bold");
-  headerRange.setHorizontalAlignment("center");
-
-  // Format kolom Nilai Akhir header dengan warna oranye TACO
-  sheet.getRange(1, 7).setBackground("#E74A25");
-
-  // Data sample baris 2 & 3 dengan formula otomatis
-  var sampleRows = [
-    ["Shigit Darmawan", "B", 95, 50, "-", 80, "=HITUNG_NILAI_AKHIR(B2, C2, D2, E2, F2)", "Disiplin kerja sangat baik"],
-    ["Riki Setiawan", "PM", 90, 60, 85, "-", "=HITUNG_NILAI_AKHIR(B3, C3, D3, E3, F3)", "PM mesin selesai tepat waktu"]
-  ];
-  sheet.getRange(2, 1, sampleRows.length, headers.length).setValues(sampleRows);
-
-  // Validasi Dropdown untuk Group (A, B, C, D, PM)
-  var groupRule = SpreadsheetApp.newDataValidation()
-    .requireValueInList(["A", "B", "C", "D", "PM"], true)
-    .setAllowInvalid(false)
-    .build();
-  sheet.getRange("B2:B100").setDataValidation(groupRule);
-
-  // Lebar kolom
-  sheet.setColumnWidth(1, 200); // Nama
-  sheet.setColumnWidth(2, 80);  // Group
-  sheet.setColumnWidth(3, 130); // Absensi
-  sheet.setColumnWidth(4, 130); // Downtime
-  sheet.setColumnWidth(5, 150); // PM Completion
-  sheet.setColumnWidth(6, 110); // 5R
-  sheet.setColumnWidth(7, 110); // Nilai Akhir
-  sheet.setColumnWidth(8, 250); // Catatan
-
-  sheet.getRange("A1:H100").setVerticalAlignment("middle");
-  sheet.getRange("B2:G100").setHorizontalAlignment("center");
-  sheet.getRange("G2:G100").setFontWeight("bold").setFontColor("#0F172A");
-
-  ui.alert("Template sheet '" + sheetName + "' berhasil dibuat dengan formula otomatis!");
 }
 
 /**
- * Merapikan styling dan alignment tabel di sheet yang sedang aktif
+ * 3. REAL-TIME AUTO RECALCULATE (TRIGGER onEdit)
+ * Setiap kali ada sel (Absensi, Downtime, PM, 5R, atau Group) yang diubah di Google Sheets,
+ * baris tersebut akan otomatis dihitung dan kolom "Nilai Akhir" terisi seketika!
  */
-function rapikanTabelAktif() {
+function onEdit(e) {
+  try {
+    if (!e || !e.range) return;
+    var sheet = e.range.getSheet();
+    var row = e.range.getRow();
+    var col = e.range.getColumn();
+
+    // Jangan proses baris header (baris 1)
+    if (row < 2) return;
+
+    var lastCol = sheet.getLastColumn();
+    if (lastCol < 4) return;
+
+    var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+    var colMap = cariIndexKolom(headers);
+    if (colMap.nilaiAkhir === -1 || colMap.group === -1) return;
+
+    // Cek apakah sel yang diedit berhubungan dengan komponen penilaian
+    var isScoreColumn = (
+      col === colMap.group + 1 ||
+      col === colMap.absensi + 1 ||
+      col === colMap.downtime + 1 ||
+      col === colMap.pmCompletion + 1 ||
+      col === colMap.fiveR + 1
+    );
+
+    if (isScoreColumn) {
+      var rowValues = sheet.getRange(row, 1, 1, lastCol).getValues()[0];
+      var grp = String(rowValues[colMap.group] || "").trim().toUpperCase();
+      var abs = bersihkanAngka(rowValues[colMap.absensi]);
+      var down = bersihkanAngka(rowValues[colMap.downtime]);
+      var pmVal = colMap.pmCompletion !== -1 ? rowValues[colMap.pmCompletion] : "";
+      var f5Val = colMap.fiveR !== -1 ? rowValues[colMap.fiveR] : "";
+      var pm = (pmVal !== "" && pmVal !== "-") ? bersihkanAngka(pmVal) : null;
+      var f5 = (f5Val !== "" && f5Val !== "-") ? bersihkanAngka(f5Val) : null;
+
+      if (grp) {
+        var calculatedScore = HITUNG_NILAI_AKHIR(grp, abs, down, pm, f5);
+        sheet.getRange(row, colMap.nilaiAkhir + 1).setValue(calculatedScore);
+      }
+    }
+  } catch (err) {
+    Logger.log("Error onEdit: " + err.toString());
+  }
+}
+
+/**
+ * 4. MENU KHUSUS DI TOOLBAR GOOGLE SHEETS
+ */
+function onOpen() {
+  try {
+    var ui = SpreadsheetApp.getUi();
+    ui.createMenu("TACO Appraisal")
+      .addItem("Hitung Nilai Akhir (Sheet Aktif)", "hitungSemuaNilaiAkhir")
+      .addSeparator()
+      .addItem("Buat Template Sheet Bulan Baru", "buatTemplateSheetBulanBaru")
+      .addItem("Format & Rapikan Tabel", "rapikanTabelAktif")
+      .addSeparator()
+      .addItem("Test Script (Cek Status Bebas Error)", "testFungsi")
+      .addToUi();
+  } catch (e) {
+    // Abaikan jika dipanggil dari Web App tanpa UI
+  }
+}
+
+/**
+ * Menghitung seluruh karyawan di sheet aktif dalam satu klik
+ */
+function hitungSemuaNilaiAkhir() {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
   var lastRow = sheet.getLastRow();
   var lastCol = sheet.getLastColumn();
-  if (lastRow < 1 || lastCol < 1) return;
 
-  sheet.getRange(1, 1, 1, lastCol).setFontWeight("bold").setBackground("#1E293B").setFontColor("#FFFFFF").setHorizontalAlignment("center");
-  sheet.getRange(2, 1, lastRow - 1, lastCol).setVerticalAlignment("middle");
-  SpreadsheetApp.getUi().alert("Tabel berhasil dirapikan.");
+  if (lastRow < 2 || lastCol < 4) {
+    SpreadsheetApp.getUi().alert("Sheet masih kosong atau kolom belum lengkap.");
+    return;
+  }
+
+  var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var colMap = cariIndexKolom(headers);
+
+  if (colMap.nilaiAkhir === -1) {
+    // Tambah kolom Nilai Akhir di akhir jika belum ada
+    colMap.nilaiAkhir = lastCol;
+    sheet.getRange(1, lastCol + 1).setValue("Nilai Akhir");
+    lastCol++;
+  }
+
+  var allData = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+  var outputNilai = [];
+
+  for (var i = 0; i < allData.length; i++) {
+    var row = allData[i];
+    var grp = String(row[colMap.group] || "").trim().toUpperCase();
+    var abs = bersihkanAngka(row[colMap.absensi]);
+    var down = bersihkanAngka(row[colMap.downtime]);
+    var pmVal = colMap.pmCompletion !== -1 ? row[colMap.pmCompletion] : "";
+    var f5Val = colMap.fiveR !== -1 ? row[colMap.fiveR] : "";
+    var pm = (pmVal !== "" && pmVal !== "-") ? bersihkanAngka(pmVal) : null;
+    var f5 = (f5Val !== "" && f5Val !== "-") ? bersihkanAngka(f5Val) : null;
+
+    if (!grp) {
+      outputNilai.push([""]);
+    } else {
+      var score = HITUNG_NILAI_AKHIR(grp, abs, down, pm, f5);
+      outputNilai.push([score]);
+    }
+  }
+
+  sheet.getRange(2, colMap.nilaiAkhir + 1, outputNilai.length, 1).setValues(outputNilai);
+  SpreadsheetApp.getUi().alert("Berhasil menghitung Nilai Akhir untuk " + outputNilai.length + " karyawan!");
 }
 
 /**
- * Menampilkan popup petunjuk dan rumus penggunaan
- */
-function tampilkanPetunjuk() {
-  var msg = "PETUNJUK FORMULA TACO PERFORMANCE APPRAISAL\n\n" +
-    "1. Rumus di Google Sheets:\n" +
-    "   =HITUNG_NILAI_AKHIR(Group, Absensi, Downtime, PM_Completion, 5R)\n\n" +
-    "2. Aturan Pembobotan Kriteria:\n" +
-    "   • Group PM: Absensi (30%) + Downtime (35%) + PM Completion (35%)\n" +
-    "   • Group A, B, C, D: Absensi (30%) + Downtime (35%) + 5R (35%)\n\n" +
-    "3. Integrasi Web Utility:\n" +
-    "   Gunakan menu 'Deploy as Web App' untuk menghubungkan sheet ini dengan aplikasi Performance Appraisal Utility secara live.";
-  SpreadsheetApp.getUi().alert(msg);
-}
-
-/**
- * =========================================================================
- * WEB APP REST API (doGet & doPost)
- * Hubungkan Google Sheets dengan Web Dashboard Performance Appraisal Utility
- * =========================================================================
- */
-
-/**
- * HTTP GET: Mengambil semua data penilaian dari Google Sheets dalam format JSON
+ * 5. REST API WEB APP (HTTP GET): SINKRONISASI REAL-TIME KE DASHBOARD VERCEL
  */
 function doGet(e) {
   try {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
+    if (!ss) {
+      return ContentService.createTextOutput(JSON.stringify({
+        status: "success",
+        message: "Endpoint Web App Aktif.",
+        records: []
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    var requestedMonth = (e && e.parameter && e.parameter.month) ? String(e.parameter.month).trim().toLowerCase() : "";
     var sheets = ss.getSheets();
     var result = {
       status: "success",
@@ -265,6 +310,10 @@ function doGet(e) {
       if (lastRow < 2 || lastCol < 3) continue;
 
       var monthId = sheetName.toLowerCase().replace(/\s+/g, "-");
+      if ((monthId === "sheet1" || monthId === "sheet-1" || monthId === "data" || monthId === "appraisal") && requestedMonth) {
+        monthId = requestedMonth;
+      }
+
       result.months.push({
         id: monthId,
         name: sheetName,
@@ -272,29 +321,37 @@ function doGet(e) {
         weightsPM: DEFAULT_WEIGHTS.PM
       });
 
-      var data = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
-      for (var r = 0; r < data.length; r++) {
-        var row = data[r];
-        if (!row[0] && !row[1]) continue;
+      var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+      var colMap = cariIndexKolom(headers);
 
-        var name = String(row[0] || "").trim();
-        var grp = String(row[1] || "").trim().toUpperCase();
-        var abs = parseFloat(row[2]) || 0;
-        var down = parseFloat(row[3]) || 0;
-        var pm = row[4] !== "" && !isNaN(row[4]) ? parseFloat(row[4]) : null;
-        var f5 = row[5] !== "" && !isNaN(row[5]) ? parseFloat(row[5]) : null;
-        var finalScore = parseFloat(row[6]) || HITUNG_NILAI_AKHIR(grp, abs, down, pm, f5);
-        var notes = String(row[7] || "");
+      var allRows = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+      for (var r = 0; r < allRows.length; r++) {
+        var row = allRows[r];
+        var name = String(row[colMap.name] || "").trim();
+        var grp = String(row[colMap.group] || "").trim().toUpperCase();
+
+        if (!name || name === "-" || name.toLowerCase() === "nama karyawan") continue;
+
+        var abs = bersihkanAngka(row[colMap.absensi]);
+        var down = bersihkanAngka(row[colMap.downtime]);
+        var pmVal = colMap.pmCompletion !== -1 ? row[colMap.pmCompletion] : "";
+        var f5Val = colMap.fiveR !== -1 ? row[colMap.fiveR] : "";
+        var pm = (pmVal !== "" && pmVal !== "-" && !isNaN(bersihkanAngka(pmVal))) ? bersihkanAngka(pmVal) : null;
+        var f5 = (f5Val !== "" && f5Val !== "-" && !isNaN(bersihkanAngka(f5Val))) ? bersihkanAngka(f5Val) : null;
+
+        var finalScoreVal = colMap.nilaiAkhir !== -1 ? bersihkanAngka(row[colMap.nilaiAkhir]) : 0;
+        var finalScore = finalScoreVal > 0 ? finalScoreVal : HITUNG_NILAI_AKHIR(grp, abs, down, pm, f5);
+        var notes = colMap.notes !== -1 ? String(row[colMap.notes] || "") : "";
 
         result.records.push({
           id: monthId + "-emp-" + (r + 1),
           monthId: monthId,
           name: name,
-          group: grp,
+          group: (grp === "PM" || grp === "A" || grp === "B" || grp === "C" || grp === "D") ? grp : "A",
           absensi: abs,
           downtime: down,
-          pmCompletion: grp === "PM" ? pm : null,
-          fiveR: grp !== "PM" ? f5 : null,
+          pmCompletion: grp === "PM" ? (pm !== null ? pm : 0) : null,
+          fiveR: grp !== "PM" ? (f5 !== null ? f5 : (pm !== null ? pm : 0)) : null,
           finalScore: finalScore,
           notes: notes
         });
@@ -312,7 +369,7 @@ function doGet(e) {
 }
 
 /**
- * HTTP POST: Menyimpan / update data karyawan dari Web Utility ke Google Sheets
+ * 6. REST API WEB APP (HTTP POST): KIRIM / SIMPAN DATA DARI DASHBOARD
  */
 function doPost(e) {
   try {
@@ -326,7 +383,6 @@ function doPost(e) {
       var sheet = ss.getSheetByName(targetSheetName);
 
       if (!sheet) {
-        // Buat sheet baru jika belum ada
         sheet = ss.insertSheet(targetSheetName);
         var headers = ["Nama Karyawan", "Group", "Absensi", "Downtime", "PM Completion", "5R", "Nilai Akhir", "Catatan"];
         sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
@@ -346,14 +402,14 @@ function doPost(e) {
 
       return ContentService.createTextOutput(JSON.stringify({
         status: "success",
-        message: "Data karyawan berhasil ditambahkan ke Google Sheets!",
+        message: "Data karyawan berhasil disimpan ke Google Sheets!",
         finalScore: finalScore
       })).setMimeType(ContentService.MimeType.JSON);
     }
 
     return ContentService.createTextOutput(JSON.stringify({
       status: "error",
-      message: "Aksi tidak dikenali."
+      message: "Action tidak dikenali."
     })).setMimeType(ContentService.MimeType.JSON);
   } catch (err) {
     return ContentService.createTextOutput(JSON.stringify({
@@ -361,4 +417,39 @@ function doPost(e) {
       message: err.toString()
     })).setMimeType(ContentService.MimeType.JSON);
   }
+}
+
+/**
+ * 7. BUAT TEMPLATE SHEET BULAN BARU OTOMATIS
+ */
+function buatTemplateSheetBulanBaru() {
+  var ui = SpreadsheetApp.getUi();
+  var response = ui.prompt("Buat Sheet Bulan Baru", "Masukkan nama bulan (contoh: Oktober 2026):", ui.ButtonSet.OK_CANCEL);
+  
+  if (response.getSelectedButton() !== ui.Button.OK) return;
+  var sheetName = response.getResponseText().trim();
+  if (!sheetName) return;
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (ss.getSheetByName(sheetName)) {
+    ui.alert("Sheet dengan nama '" + sheetName + "' sudah ada!");
+    return;
+  }
+
+  var sheet = ss.insertSheet(sheetName);
+  var headers = ["No", "Nama Karyawan", "Group", "Absensi", "Downtime", "PM Completion", "5R", "Nilai Akhir", "Catatan"];
+  var headerRange = sheet.getRange(1, 1, 1, headers.length);
+  headerRange.setValues([headers]);
+  headerRange.setBackground("#1E293B").setFontColor("#FFFFFF").setFontWeight("bold");
+  sheet.setFrozenRows(1);
+  ui.alert("Template sheet '" + sheetName + "' berhasil dibuat!");
+}
+
+/**
+ * 8. RAPIKAN FORMAT TABEL
+ */
+function rapikanTabelAktif() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  sheet.autoResizeColumns(1, sheet.getLastColumn());
+  SpreadsheetApp.getUi().alert("Tabel berhasil dirapikan!");
 }

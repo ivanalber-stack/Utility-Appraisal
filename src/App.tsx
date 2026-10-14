@@ -13,6 +13,11 @@ import {
   Sparkles,
   FileSpreadsheet,
   Link2,
+  RefreshCw,
+  AlertCircle,
+  CheckCircle2,
+  Radio,
+  ExternalLink,
 } from 'lucide-react';
 import { INITIAL_MONTHS, INITIAL_RECORDS } from './data/initialData';
 import {
@@ -23,6 +28,7 @@ import {
   EmployeeGroup,
   calculateFinalScore,
 } from './types/appraisal';
+import { fetchFromGoogleSheetGViz } from './utils/googleSheetsParser';
 import { SummaryStats } from './components/SummaryStats';
 import { EmployeeDetailCard } from './components/EmployeeDetailCard';
 import { AppraisalTable } from './components/AppraisalTable';
@@ -35,6 +41,9 @@ import { GoogleSheetsModal } from './components/GoogleSheetsModal';
 const STORAGE_KEY_RECORDS = 'taco_appraisal_records_v2';
 const STORAGE_KEY_MONTHS = 'taco_appraisal_months_v2';
 const STORAGE_KEY_APPSCRIPT_URL = 'taco_appraisal_appscript_url';
+const STORAGE_KEY_SPREADSHEET_URL = 'taco_appraisal_spreadsheet_url';
+const STORAGE_KEY_REALTIME_ENABLED = 'taco_appraisal_realtime_enabled';
+const STORAGE_KEY_REALTIME_INTERVAL = 'taco_appraisal_realtime_interval';
 
 export default function App() {
   // Load stored months or fallback to default
@@ -63,6 +72,11 @@ export default function App() {
   const [currentMonthId, setCurrentMonthId] = useState<string>(() => {
     return months[0]?.id || '2026-09';
   });
+
+  // Current active month config
+  const currentMonth = useMemo(() => {
+    return months.find((m) => m.id === currentMonthId) || months[0] || INITIAL_MONTHS[0];
+  }, [months, currentMonthId]);
 
   // Current selected employee record ID for radar display
   const [selectedRecordId, setSelectedRecordId] = useState<string | null>(null);
@@ -95,22 +109,192 @@ export default function App() {
     }
   };
 
+  // Link Google Spreadsheet URL
+  const [spreadsheetUrl, setSpreadsheetUrl] = useState<string>(() => {
+    try {
+      return localStorage.getItem(STORAGE_KEY_SPREADSHEET_URL) || '';
+    } catch (e) {
+      return '';
+    }
+  });
+
+  const handleSaveSpreadsheetUrl = (url: string) => {
+    setSpreadsheetUrl(url);
+    try {
+      localStorage.setItem(STORAGE_KEY_SPREADSHEET_URL, url);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // Real-time synchronization state
+  const [isRealTimeEnabled, setIsRealTimeEnabled] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_REALTIME_ENABLED);
+      return saved !== null ? saved === 'true' : true;
+    } catch (e) {
+      return true;
+    }
+  });
+
+  const handleToggleRealTime = (enabled: boolean) => {
+    setIsRealTimeEnabled(enabled);
+    try {
+      localStorage.setItem(STORAGE_KEY_REALTIME_ENABLED, String(enabled));
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const [realTimeInterval, setRealTimeInterval] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_REALTIME_INTERVAL);
+      return saved ? Number(saved) : 10000;
+    } catch (e) {
+      return 10000;
+    }
+  });
+
+  const handleChangeRealTimeInterval = (interval: number) => {
+    setRealTimeInterval(interval);
+    try {
+      localStorage.setItem(STORAGE_KEY_REALTIME_INTERVAL, String(interval));
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncFeedback, setSyncFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
   const handleImportRecords = (importedRecords: AppraisalRecord[]) => {
     setRecords((prev) => {
-      const formatted: AppraisalRecord[] = importedRecords.map((r, idx) => ({
-        ...r,
-        id: r.id || `${currentMonth.id}-imp-${Date.now()}-${idx}`,
-        monthId: r.monthId || currentMonth.id,
-        finalScore: r.finalScore ?? calculateFinalScore(r, currentMonth),
-      }));
+      const formatted: AppraisalRecord[] = importedRecords.map((r, idx) => {
+        // Jika monthId tidak terdaftar, arahkan ke currentMonth.id
+        const isKnownMonth = months.some((m) => m.id === r.monthId);
+        const resolvedMonthId = isKnownMonth ? (r.monthId || currentMonth.id) : currentMonth.id;
+        const targetMonth = months.find((m) => m.id === resolvedMonthId) || currentMonth;
 
-      const incomingNames = new Set(formatted.map((f) => f.name.toLowerCase()));
+        return {
+          ...r,
+          id: r.id || `${resolvedMonthId}-imp-${Date.now()}-${idx}`,
+          monthId: resolvedMonthId,
+          finalScore: r.finalScore ?? calculateFinalScore(r, targetMonth),
+        };
+      });
+
+      const incomingKeys = new Set(formatted.map((f) => `${f.monthId}_${f.name.toLowerCase()}`));
       const kept = prev.filter(
-        (p) => !(p.monthId === currentMonth.id && incomingNames.has(p.name.toLowerCase()))
+        (p) => !incomingKeys.has(`${p.monthId}_${p.name.toLowerCase()}`)
       );
       return [...kept, ...formatted];
     });
   };
+
+  const handleSyncFromGoogleSheets = async (options?: { silent?: boolean }) => {
+    const isSilent = options?.silent ?? false;
+    const scriptUrl = appsScriptUrl.trim();
+    const sheetUrl = spreadsheetUrl.trim();
+
+    if (!scriptUrl && !sheetUrl) {
+      if (!isSilent) setIsGoogleSheetsModalOpen(true);
+      return;
+    }
+
+    if (!isSilent) {
+      setIsSyncing(true);
+      setSyncFeedback(null);
+    }
+
+    let successCount = 0;
+    let source = '';
+
+    try {
+      // 1. Coba ambil lewat Apps Script Web App jika URL /exec tersedia
+      if (scriptUrl && scriptUrl.includes('/exec')) {
+        source = 'Google Apps Script';
+        const fetchUrl = scriptUrl.includes('?')
+          ? `${scriptUrl}&month=${encodeURIComponent(currentMonth.id)}&t=${Date.now()}`
+          : `${scriptUrl}?month=${encodeURIComponent(currentMonth.id)}&t=${Date.now()}`;
+
+        const res = await fetch(fetchUrl, { redirect: 'follow' });
+        if (res.ok) {
+          const json = await res.json();
+          if (json && Array.isArray(json.records) && json.records.length > 0) {
+            handleImportRecords(json.records);
+            successCount = json.records.length;
+            setLastSyncTime(new Date());
+          }
+        }
+      }
+
+      // 2. Fallback: Coba ambil langsung dari Google Spreadsheet via GViz API jika Apps Script belum diisi / kosong
+      if (successCount === 0 && sheetUrl) {
+        source = 'Google Spreadsheet (GViz)';
+        const parsedRecords = await fetchFromGoogleSheetGViz(sheetUrl, currentMonth);
+        if (parsedRecords && parsedRecords.length > 0) {
+          handleImportRecords(parsedRecords);
+          successCount = parsedRecords.length;
+          setLastSyncTime(new Date());
+        }
+      }
+
+      if (successCount > 0) {
+        if (!isSilent) {
+          setSyncFeedback({
+            type: 'success',
+            message: `Sukses! Berhasil sinkronisasi ${successCount} data karyawan secara real-time via ${source}.`,
+          });
+        }
+      } else if (!isSilent) {
+        setSyncFeedback({
+          type: 'error',
+          message: 'Tidak ada data karyawan yang berhasil ditarik. Pastikan Google Sheets memiliki data dan hak akses dibagikan ke publik ("Anyone with the link can view") atau deploy Apps Script sebagai Web App ("Anyone").',
+        });
+      }
+    } catch (err: unknown) {
+      if (!isSilent) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setSyncFeedback({
+          type: 'error',
+          message: `Gagal sinkronisasi data: ${msg}`,
+        });
+      }
+    } finally {
+      if (!isSilent) {
+        setIsSyncing(false);
+        setTimeout(() => {
+          setSyncFeedback(null);
+        }, 7000);
+      }
+    }
+  };
+
+  // Real-time automatic polling timer
+  useEffect(() => {
+    if (!isRealTimeEnabled) return;
+    if (!appsScriptUrl && !spreadsheetUrl) return;
+
+    const intervalId = setInterval(() => {
+      handleSyncFromGoogleSheets({ silent: true });
+    }, realTimeInterval);
+
+    return () => clearInterval(intervalId);
+  }, [isRealTimeEnabled, realTimeInterval, appsScriptUrl, spreadsheetUrl, currentMonth.id]);
+
+  // Real-time sync on Window Focus (ketika user berpindah dari Google Sheets tab kembali ke web dashboard ini)
+  useEffect(() => {
+    if (!isRealTimeEnabled) return;
+    if (!appsScriptUrl && !spreadsheetUrl) return;
+
+    const handleWindowFocus = () => {
+      handleSyncFromGoogleSheets({ silent: true });
+    };
+
+    window.addEventListener('focus', handleWindowFocus);
+    return () => window.removeEventListener('focus', handleWindowFocus);
+  }, [isRealTimeEnabled, appsScriptUrl, spreadsheetUrl, currentMonth.id]);
 
   // Save to localStorage when state updates
   useEffect(() => {
@@ -129,10 +313,7 @@ export default function App() {
     }
   }, [records]);
 
-  // Current active month config
-  const currentMonth = useMemo(() => {
-    return months.find((m) => m.id === currentMonthId) || months[0] || INITIAL_MONTHS[0];
-  }, [months, currentMonthId]);
+
 
   // Records for active month
   const activeMonthRecords = useMemo(() => {
@@ -311,28 +492,64 @@ export default function App() {
 
             {/* Zone 3: Actions */}
             <div className="flex items-center gap-2">
+              {isRealTimeEnabled && (appsScriptUrl || spreadsheetUrl) && (
+                <div
+                  className="hidden xl:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-950/60 border border-emerald-800/70 text-emerald-300 text-xs font-mono"
+                  title={lastSyncTime ? `Sinkronisasi real-time aktif. Terakhir update: ${lastSyncTime.toLocaleTimeString()}` : 'Sinkronisasi real-time otomatis aktif'}
+                >
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                  <span className="text-[11px] font-semibold text-emerald-300">LIVE ({(realTimeInterval / 1000)}s)</span>
+                </div>
+              )}
+
+              {spreadsheetUrl && (
+                <a
+                  href={spreadsheetUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors border text-emerald-300 bg-emerald-950/70 border-emerald-700/80 hover:bg-emerald-900/80 hover:text-emerald-100"
+                  title="Buka Google Spreadsheet di tab baru"
+                >
+                  <ExternalLink className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Buka Sheet ↗</span>
+                </a>
+              )}
+
+              {(appsScriptUrl || spreadsheetUrl) && (
+                <button
+                  type="button"
+                  onClick={() => handleSyncFromGoogleSheets()}
+                  disabled={isSyncing}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors shadow-2xs border text-cyan-300 bg-cyan-950/70 border-cyan-700/80 hover:bg-cyan-900/80 hover:text-cyan-200"
+                  title="Tarik data nilai terbaru langsung dari Google Sheets"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin text-cyan-400' : 'text-cyan-400'}`} />
+                  <span className="hidden sm:inline">{isSyncing ? 'Menarik...' : 'Sync Nilai'}</span>
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={() => setIsGoogleSheetsModalOpen(true)}
                 className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors shadow-2xs border ${
-                  appsScriptUrl
+                  appsScriptUrl || spreadsheetUrl
                     ? 'text-emerald-300 bg-emerald-950/70 border-emerald-700/80 hover:bg-emerald-900/80 hover:text-emerald-200'
                     : 'text-indigo-300 bg-indigo-950/70 border-indigo-800/80 hover:bg-indigo-900/80 hover:text-indigo-200'
                 }`}
-                title={appsScriptUrl ? `Google Apps Script Terhubung: ${appsScriptUrl}` : 'Input Link Google Apps Script / Code.gs'}
+                title="Input Link Google Spreadsheet / Apps Script & Real-Time"
               >
-                {appsScriptUrl ? (
+                {appsScriptUrl || spreadsheetUrl ? (
                   <>
                     <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
                     <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
-                    <span className="hidden md:inline">Apps Script Terhubung</span>
-                    <span className="md:hidden">Apps Script</span>
+                    <span className="hidden md:inline">Sheets Terhubung</span>
+                    <span className="md:hidden">Sheets</span>
                   </>
                 ) : (
                   <>
                     <Link2 className="w-3.5 h-3.5 text-indigo-400" />
-                    <span className="hidden md:inline">Input Link Apps Script</span>
-                    <span className="md:hidden">Link Script</span>
+                    <span className="hidden md:inline">Input Link Sheets</span>
+                    <span className="md:hidden">Link Sheets</span>
                   </>
                 )}
               </button>
@@ -366,6 +583,32 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6">
+        {/* Sync Feedback Toast / Banner */}
+        {syncFeedback && (
+          <div
+            className={`mb-5 p-3.5 rounded-xl border flex items-start justify-between gap-3 text-xs transition-all ${
+              syncFeedback.type === 'success'
+                ? 'bg-emerald-950/80 border-emerald-700/90 text-emerald-200'
+                : 'bg-rose-950/80 border-rose-700/90 text-rose-200'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              {syncFeedback.type === 'success' ? (
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              ) : (
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+              )}
+              <span className="font-medium">{syncFeedback.message}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSyncFeedback(null)}
+              className="text-slate-400 hover:text-white font-bold ml-2 text-sm leading-none"
+            >
+              ×
+            </button>
+          </div>
+        )}
         {/* KPI Strip */}
         <SummaryStats
           records={records}
@@ -507,6 +750,11 @@ export default function App() {
               }}
               onOpenCodeGs={() => setIsGoogleSheetsModalOpen(true)}
               appsScriptUrl={appsScriptUrl}
+              spreadsheetUrl={spreadsheetUrl}
+              onSyncFromSheets={() => handleSyncFromGoogleSheets()}
+              isSyncing={isSyncing}
+              isRealTimeEnabled={isRealTimeEnabled}
+              lastSyncTime={lastSyncTime}
             />
           </div>
         </div>
@@ -573,6 +821,15 @@ export default function App() {
         records={records}
         appsScriptUrl={appsScriptUrl}
         onSaveAppsScriptUrl={handleSaveAppsScriptUrl}
+        spreadsheetUrl={spreadsheetUrl}
+        onSaveSpreadsheetUrl={handleSaveSpreadsheetUrl}
+        isRealTimeEnabled={isRealTimeEnabled}
+        onToggleRealTime={handleToggleRealTime}
+        realTimeInterval={realTimeInterval}
+        onChangeRealTimeInterval={handleChangeRealTimeInterval}
+        lastSyncTime={lastSyncTime}
+        onSyncNow={() => handleSyncFromGoogleSheets()}
+        isSyncing={isSyncing}
         onImportRecords={handleImportRecords}
       />
     </div>

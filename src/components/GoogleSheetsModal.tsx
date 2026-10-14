@@ -21,8 +21,13 @@ import {
   DownloadCloud,
   Globe,
   HelpCircle,
+  Radio,
+  Timer,
+  Activity,
+  Clock,
 } from 'lucide-react';
 import { AppraisalRecord, MonthConfig } from '../types/appraisal';
+import { fetchFromGoogleSheetGViz } from '../utils/googleSheetsParser';
 
 interface GoogleSheetsModalProps {
   isOpen: boolean;
@@ -31,6 +36,15 @@ interface GoogleSheetsModalProps {
   records: AppraisalRecord[];
   appsScriptUrl?: string;
   onSaveAppsScriptUrl?: (url: string) => void;
+  spreadsheetUrl?: string;
+  onSaveSpreadsheetUrl?: (url: string) => void;
+  isRealTimeEnabled?: boolean;
+  onToggleRealTime?: (enabled: boolean) => void;
+  realTimeInterval?: number;
+  onChangeRealTimeInterval?: (interval: number) => void;
+  lastSyncTime?: Date | null;
+  onSyncNow?: () => Promise<void>;
+  isSyncing?: boolean;
   onImportRecords?: (importedRecords: AppraisalRecord[]) => void;
   initialTab?: 'link' | 'troubleshoot' | 'native' | 'code' | 'guide';
 }
@@ -42,6 +56,15 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
   records,
   appsScriptUrl = '',
   onSaveAppsScriptUrl,
+  spreadsheetUrl = '',
+  onSaveSpreadsheetUrl,
+  isRealTimeEnabled = true,
+  onToggleRealTime,
+  realTimeInterval = 10000,
+  onChangeRealTimeInterval,
+  lastSyncTime = null,
+  onSyncNow,
+  isSyncing = false,
   onImportRecords,
   initialTab = 'link',
 }) => {
@@ -49,22 +72,29 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
   const [copied, setCopied] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   
-  // Link input state
+  // Link inputs state
   const [inputUrl, setInputUrl] = useState(appsScriptUrl);
+  const [inputSpreadsheetUrl, setInputSpreadsheetUrl] = useState(spreadsheetUrl);
   const [isUrlSaved, setIsUrlSaved] = useState(false);
+  const [isSheetUrlSaved, setIsSheetUrlSaved] = useState(false);
+  const [isFetchingGViz, setIsFetchingGViz] = useState(false);
   const [testStatus, setTestStatus] = useState<{
     type: 'idle' | 'loading' | 'success' | 'warning' | 'error';
     message: string;
     detail?: string;
   }>({
     type: appsScriptUrl ? 'idle' : 'idle',
-    message: appsScriptUrl ? 'Link tersimpan di memori browser.' : '',
+    message: appsScriptUrl ? 'Link Apps Script tersimpan.' : '',
   });
 
-  // Keep input in sync with prop
+  // Keep input in sync with props
   useEffect(() => {
     setInputUrl(appsScriptUrl);
   }, [appsScriptUrl]);
+
+  useEffect(() => {
+    setInputSpreadsheetUrl(spreadsheetUrl);
+  }, [spreadsheetUrl]);
 
   if (!isOpen) return null;
 
@@ -270,6 +300,128 @@ function hitungSemuaNilaiAkhir() {
   dataRange.setValues(values);
   if (ui) ui.alert("Berhasil menghitung Nilai Akhir untuk " + values.length + " karyawan!");
 }
+
+/**
+ * 5. WEB APP REST API (doGet) UNTUK SINKRONISASI KE WEB DASHBOARD VERCEL
+ */
+function doGet(e) {
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    if (!ss) {
+      return ContentService.createTextOutput(JSON.stringify({
+        status: "success",
+        message: "Endpoint Web App Aktif.",
+        records: []
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    var requestedMonth = (e && e.parameter && e.parameter.month) ? String(e.parameter.month).trim().toLowerCase() : "";
+    var sheets = ss.getSheets();
+    var result = {
+      status: "success",
+      appName: "TACO Performance Appraisal Utility",
+      updatedAt: new Date().toISOString(),
+      months: [],
+      records: []
+    };
+
+    for (var s = 0; s < sheets.length; s++) {
+      var sheet = sheets[s];
+      var sheetName = sheet.getName();
+      var lastRow = sheet.getLastRow();
+      var lastCol = sheet.getLastColumn();
+
+      if (lastRow < 2 || lastCol < 2) continue;
+
+      var monthId = sheetName.toLowerCase().replace(/\\s+/g, "-");
+      if ((monthId === "sheet1" || monthId === "sheet-1" || monthId === "data" || monthId === "appraisal") && requestedMonth) {
+        monthId = requestedMonth;
+      }
+
+      result.months.push({
+        id: monthId,
+        name: sheetName,
+        weightsAD: DEFAULT_WEIGHTS.AD,
+        weightsPM: DEFAULT_WEIGHTS.PM
+      });
+
+      var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+      var colMap = {
+        name: -1,
+        group: -1,
+        absensi: -1,
+        downtime: -1,
+        pmCompletion: -1,
+        fiveR: -1,
+        nilaiAkhir: -1,
+        notes: -1
+      };
+
+      for (var c = 0; c < headers.length; c++) {
+        var h = String(headers[c] || "").toLowerCase().trim();
+        if (h.indexOf("nama") !== -1 || h === "name" || h === "karyawan") colMap.name = c;
+        else if (h.indexOf("group") !== -1 || h === "grup" || h === "grp") colMap.group = c;
+        else if (h.indexOf("absen") !== -1) colMap.absensi = c;
+        else if (h.indexOf("down") !== -1) colMap.downtime = c;
+        else if (h.indexOf("pm") !== -1 && h.indexOf("group") === -1) colMap.pmCompletion = c;
+        else if (h.indexOf("5r") !== -1 || h.indexOf("5 r") !== -1) colMap.fiveR = c;
+        else if (h.indexOf("nilai") !== -1 || h.indexOf("akhir") !== -1 || h === "total") colMap.nilaiAkhir = c;
+        else if (h.indexOf("catatan") !== -1 || h.indexOf("note") !== -1 || h.indexOf("ket") !== -1) colMap.notes = c;
+      }
+
+      if (colMap.name === -1) {
+        colMap.name = (headers.length > 1 && String(headers[0]).toLowerCase().indexOf("no") !== -1) ? 1 : 0;
+      }
+      if (colMap.group === -1) colMap.group = colMap.name + 1;
+      if (colMap.absensi === -1) colMap.absensi = colMap.group + 1;
+      if (colMap.downtime === -1) colMap.downtime = colMap.absensi + 1;
+      if (colMap.pmCompletion === -1) colMap.pmCompletion = colMap.downtime + 1;
+      if (colMap.fiveR === -1) colMap.fiveR = colMap.pmCompletion + 1;
+      if (colMap.nilaiAkhir === -1) colMap.nilaiAkhir = colMap.fiveR + 1;
+
+      var allRows = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+      for (var r = 0; r < allRows.length; r++) {
+        var row = allRows[r];
+        var name = String(row[colMap.name] || "").trim();
+        var grp = String(row[colMap.group] || "").trim().toUpperCase();
+
+        if (!name || name === "-" || name.toLowerCase() === "nama karyawan") continue;
+
+        var abs = bersihkanAngka(row[colMap.absensi]);
+        var down = bersihkanAngka(row[colMap.downtime]);
+        var pmVal = colMap.pmCompletion !== -1 ? row[colMap.pmCompletion] : "";
+        var f5Val = colMap.fiveR !== -1 ? row[colMap.fiveR] : "";
+        var pm = (pmVal !== "" && pmVal !== "-" && !isNaN(bersihkanAngka(pmVal))) ? bersihkanAngka(pmVal) : null;
+        var f5 = (f5Val !== "" && f5Val !== "-" && !isNaN(bersihkanAngka(f5Val))) ? bersihkanAngka(f5Val) : null;
+
+        var finalScoreVal = colMap.nilaiAkhir !== -1 ? bersihkanAngka(row[colMap.nilaiAkhir]) : 0;
+        var finalScore = finalScoreVal > 0 ? finalScoreVal : HITUNG_NILAI_AKHIR(grp, abs, down, pm, f5);
+        var notes = colMap.notes !== -1 ? String(row[colMap.notes] || "") : "";
+
+        result.records.push({
+          id: monthId + "-emp-" + (r + 1),
+          monthId: monthId,
+          name: name,
+          group: (grp === "PM" || grp === "A" || grp === "B" || grp === "C" || grp === "D") ? grp : "A",
+          absensi: abs,
+          downtime: down,
+          pmCompletion: grp === "PM" ? pm : null,
+          fiveR: grp !== "PM" ? (f5 !== null ? f5 : pm) : null,
+          finalScore: finalScore,
+          notes: notes
+        });
+      }
+    }
+
+    return ContentService.createTextOutput(JSON.stringify(result))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({
+      status: "error",
+      message: err.toString()
+    })).setMimeType(ContentService.MimeType.JSON);
+  }
+}
 `;
 
   const handleSaveUrl = () => {
@@ -280,8 +432,8 @@ function hitungSemuaNilaiAkhir() {
     setIsUrlSaved(true);
     setTestStatus({
       type: 'success',
-      message: 'Link berhasil disimpan!',
-      detail: cleaned ? 'Link tersimpan di memori browser Anda.' : 'Link telah dikosongkan.',
+      message: 'Link Apps Script berhasil disimpan!',
+      detail: cleaned ? 'Link Web App tersimpan di memori browser Anda.' : 'Link telah dikosongkan.',
     });
     setTimeout(() => setIsUrlSaved(false), 2500);
   };
@@ -293,14 +445,86 @@ function hitungSemuaNilaiAkhir() {
     }
     setTestStatus({
       type: 'idle',
-      message: 'Link berhasil dihapus.',
+      message: 'Link Apps Script berhasil dihapus.',
     });
   };
 
-  // Determine link type
+  const handleSaveSpreadsheetUrl = () => {
+    const cleaned = inputSpreadsheetUrl.trim();
+    if (onSaveSpreadsheetUrl) {
+      onSaveSpreadsheetUrl(cleaned);
+    }
+    setIsSheetUrlSaved(true);
+    setTestStatus({
+      type: 'success',
+      message: 'Link Google Spreadsheet berhasil disimpan!',
+      detail: cleaned ? 'Dashboard terhubung ke link Google Spreadsheet Anda.' : 'Link spreadsheet telah dikosongkan.',
+    });
+    setTimeout(() => setIsSheetUrlSaved(false), 2500);
+  };
+
+  const handleClearSpreadsheetUrl = () => {
+    setInputSpreadsheetUrl('');
+    if (onSaveSpreadsheetUrl) {
+      onSaveSpreadsheetUrl('');
+    }
+    setTestStatus({
+      type: 'idle',
+      message: 'Link Google Spreadsheet berhasil dihapus.',
+    });
+  };
+
+  const handleFetchDirectGViz = async () => {
+    const sheetUrl = inputSpreadsheetUrl.trim();
+    if (!sheetUrl) {
+      setTestStatus({
+        type: 'error',
+        message: 'Masukkan Link Google Spreadsheet terlebih dahulu.',
+        detail: 'Contoh: https://docs.google.com/spreadsheets/d/.../edit',
+      });
+      return;
+    }
+
+    setIsFetchingGViz(true);
+    setTestStatus({
+      type: 'loading',
+      message: 'Sedang membaca data langsung dari Google Spreadsheet...',
+    });
+
+    try {
+      const recs = await fetchFromGoogleSheetGViz(sheetUrl, currentMonth);
+      if (recs && recs.length > 0) {
+        if (onImportRecords) {
+          onImportRecords(recs);
+        }
+        setTestStatus({
+          type: 'success',
+          message: `Sukses! Berhasil membaca ${recs.length} data karyawan langsung dari Google Spreadsheet!`,
+          detail: 'Data berhasil ditarik secara real-time dan tabel otomatis diperbarui.',
+        });
+      } else {
+        setTestStatus({
+          type: 'warning',
+          message: 'Tidak ada baris data karyawan yang ditemukan.',
+          detail: 'Pastikan baris header dan data karyawan pada sheet sudah terisi.',
+        });
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setTestStatus({
+        type: 'error',
+        message: 'Gagal membaca Google Spreadsheet langsung.',
+        detail: msg,
+      });
+    } finally {
+      setIsFetchingGViz(false);
+    }
+  };
+
+  // Determine link types
   const isWebAppUrl = inputUrl.includes('script.google.com/macros/s/') && inputUrl.includes('/exec');
   const isScriptEditorUrl = inputUrl.includes('script.google.com') && !inputUrl.includes('/exec');
-  const isSpreadsheetUrl = inputUrl.includes('docs.google.com/spreadsheets');
+  const isSpreadsheetUrl = inputSpreadsheetUrl.includes('docs.google.com/spreadsheets') || inputUrl.includes('docs.google.com/spreadsheets');
 
   // Test connection to Google Apps Script / Web App
   const handleTestConnection = async () => {
@@ -549,19 +773,100 @@ function hitungSemuaNilaiAkhir() {
         {/* Modal Body */}
         <div className="p-5 overflow-y-auto space-y-4 flex-1 text-slate-300 text-xs">
           
-          {/* TAB 1: INPUT LINK APPS SCRIPT / SPREADSHEET */}
+          {/* TAB 1: INPUT LINK SPREADSHEET & APPS SCRIPT & REAL-TIME */}
           {activeTab === 'link' && (
             <div className="space-y-4">
-              {/* Main Card */}
-              <div className="p-5 rounded-xl bg-slate-950/80 border border-slate-800 space-y-4">
+              {/* CARD 1: GOOGLE SPREADSHEET LINK */}
+              <div className="p-4 sm:p-5 rounded-xl bg-slate-950/80 border border-slate-800 space-y-3">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <div>
                     <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                      <Link2 className="w-4 h-4 text-indigo-400" />
-                      <span>Input Link Google Apps Script / Google Sheets</span>
+                      <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
+                      <span>1. Link Google Spreadsheet</span>
+                      {spreadsheetUrl && (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                          Tersimpan
+                        </span>
+                      )}
                     </h3>
                     <p className="text-slate-400 text-xs mt-0.5">
-                      Tempelkan URL Web App (<code className="text-indigo-300 font-mono text-[11px]">/exec</code>), link editor project Apps Script, atau link Google Sheets Anda.
+                      Tempelkan URL Google Spreadsheet Anda (contoh: <code className="text-emerald-300 font-mono text-[11px]">https://docs.google.com/spreadsheets/d/.../edit</code>)
+                    </p>
+                  </div>
+                  {inputSpreadsheetUrl && (
+                    <div className="flex items-center gap-1.5 self-start sm:self-auto">
+                      <a
+                        href={inputSpreadsheetUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-emerald-300 hover:text-white bg-emerald-950/60 hover:bg-emerald-900/80 border border-emerald-800/80 rounded-lg transition-colors"
+                        title="Buka Spreadsheet di tab baru"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Buka Sheet ↗</span>
+                      </a>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <div className="relative flex-1">
+                    <input
+                      type="url"
+                      placeholder="https://docs.google.com/spreadsheets/d/.../edit"
+                      value={inputSpreadsheetUrl}
+                      onChange={(e) => setInputSpreadsheetUrl(e.target.value)}
+                      className="w-full px-3.5 py-2.5 text-xs bg-slate-900 border border-slate-700 rounded-xl text-slate-100 placeholder-slate-500 focus:outline-hidden focus:ring-2 focus:ring-emerald-500 font-mono"
+                    />
+                    {inputSpreadsheetUrl && (
+                      <button
+                        type="button"
+                        onClick={handleClearSpreadsheetUrl}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-500 hover:text-rose-400 transition-colors"
+                        title="Hapus Link Spreadsheet"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+                    <button
+                      type="button"
+                      onClick={handleSaveSpreadsheetUrl}
+                      className="flex items-center justify-center gap-1.5 px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-xl transition-colors shadow-xs shrink-0"
+                    >
+                      {isSheetUrlSaved ? <Check className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
+                      <span>{isSheetUrlSaved ? 'Tersimpan!' : 'Simpan Sheet'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleFetchDirectGViz}
+                      disabled={isFetchingGViz || !inputSpreadsheetUrl}
+                      className="flex items-center justify-center gap-1.5 px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white font-semibold rounded-xl border border-slate-700 transition-colors shrink-0 disabled:opacity-50"
+                      title="Membaca data langsung dari Google Spreadsheet publik (GViz API)"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${isFetchingGViz ? 'animate-spin text-emerald-400' : 'text-emerald-400'}`} />
+                      <span>Tarik via Link Sheet</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* CARD 2: GOOGLE APPS SCRIPT WEB APP URL */}
+              <div className="p-4 sm:p-5 rounded-xl bg-slate-950/80 border border-slate-800 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                      <FileCode className="w-4 h-4 text-indigo-400" />
+                      <span>2. Link Google Apps Script (Web App API /exec)</span>
+                      {appsScriptUrl && (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
+                          Tersimpan
+                        </span>
+                      )}
+                    </h3>
+                    <p className="text-slate-400 text-xs mt-0.5">
+                      URL Web App hasil penerapan <code className="text-indigo-300 font-mono text-[11px]">Code.gs</code> yang berakhiran <code className="text-indigo-300 font-mono text-[11px]">/exec</code> untuk sinkronisasi nilai otomatis.
                     </p>
                   </div>
                   {inputUrl && (
@@ -571,111 +876,182 @@ function hitungSemuaNilaiAkhir() {
                         target="_blank"
                         rel="noopener noreferrer"
                         className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-indigo-300 hover:text-white bg-indigo-950/60 hover:bg-indigo-900/80 border border-indigo-800/80 rounded-lg transition-colors"
-                        title="Buka URL di tab baru"
+                        title="Buka URL Web App di tab baru"
                       >
                         <ExternalLink className="w-3.5 h-3.5" />
-                        <span>Buka Link ↗</span>
+                        <span>Buka API ↗</span>
                       </a>
                     </div>
                   )}
                 </div>
 
-                {/* Input form */}
-                <div className="space-y-2">
-                  <div className="flex flex-col sm:flex-row gap-2">
-                    <div className="relative flex-1">
-                      <input
-                        type="url"
-                        placeholder="Contoh: https://script.google.com/macros/s/.../exec"
-                        value={inputUrl}
-                        onChange={(e) => setInputUrl(e.target.value)}
-                        className="w-full px-3.5 py-2.5 text-xs bg-slate-900 border border-slate-700 rounded-xl text-slate-100 placeholder-slate-500 focus:outline-hidden focus:ring-2 focus:ring-[#E74A25] font-mono"
-                      />
-                      {inputUrl && (
-                        <button
-                          type="button"
-                          onClick={handleClearUrl}
-                          className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-500 hover:text-rose-400 transition-colors"
-                          title="Hapus URL"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <div className="relative flex-1">
+                    <input
+                      type="url"
+                      placeholder="https://script.google.com/macros/s/.../exec"
+                      value={inputUrl}
+                      onChange={(e) => setInputUrl(e.target.value)}
+                      className="w-full px-3.5 py-2.5 text-xs bg-slate-900 border border-slate-700 rounded-xl text-slate-100 placeholder-slate-500 focus:outline-hidden focus:ring-2 focus:ring-[#E74A25] font-mono"
+                    />
+                    {inputUrl && (
+                      <button
+                        type="button"
+                        onClick={handleClearUrl}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-500 hover:text-rose-400 transition-colors"
+                        title="Hapus URL Apps Script"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+                    <button
+                      type="button"
+                      onClick={handleSaveUrl}
+                      className="flex items-center justify-center gap-1.5 px-3.5 py-2.5 bg-[#E74A25] hover:bg-[#d63f1c] text-white font-semibold rounded-xl transition-colors shadow-xs shrink-0"
+                    >
+                      {isUrlSaved ? <Check className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
+                      <span>{isUrlSaved ? 'Tersimpan!' : 'Simpan Script'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleTestConnection}
+                      disabled={testStatus.type === 'loading'}
+                      className="flex items-center justify-center gap-1.5 px-3 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white font-semibold rounded-xl border border-slate-700 transition-colors shrink-0 disabled:opacity-50"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${testStatus.type === 'loading' ? 'animate-spin' : ''}`} />
+                      <span>Tes &amp; Tarik</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* CARD 3: PENGATURAN SINKRONISASI REAL-TIME */}
+              <div className="p-4 sm:p-5 rounded-xl bg-slate-950/90 border border-emerald-900/40 space-y-3.5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <Radio className="w-4 h-4 text-emerald-400 animate-pulse" />
+                      <h4 className="font-bold text-white text-xs">Sinkronisasi Real-Time Otomatis</h4>
+                      {isRealTimeEnabled ? (
+                        <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                          AKTIF
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-800 text-slate-400 border border-slate-700">
+                          NONAKTIF
+                        </span>
                       )}
                     </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={handleSaveUrl}
-                        className="flex items-center justify-center gap-1.5 px-4 py-2.5 bg-[#E74A25] hover:bg-[#d63f1c] text-white font-semibold rounded-xl transition-colors shadow-xs shrink-0"
-                      >
-                        {isUrlSaved ? <Check className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
-                        <span>{isUrlSaved ? 'Tersimpan!' : 'Simpan Link'}</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleTestConnection}
-                        disabled={testStatus.type === 'loading'}
-                        className="flex items-center justify-center gap-1.5 px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white font-semibold rounded-xl border border-slate-700 transition-colors shrink-0 disabled:opacity-50"
-                      >
-                        <RefreshCw className={`w-3.5 h-3.5 ${testStatus.type === 'loading' ? 'animate-spin' : ''}`} />
-                        <span>Tes Koneksi</span>
-                      </button>
-                    </div>
+                    <p className="text-slate-400 text-xs">
+                      Ketika nilai di Google Sheets diubah, dashboard Vercel secara otomatis mengambil data terbaru tanpa reload halaman.
+                    </p>
                   </div>
 
-                  {/* Status Feedback Banner */}
-                  {testStatus.message && (
-                    <div
-                      className={`p-3 rounded-xl border text-xs font-mono flex items-start gap-2.5 ${
-                        testStatus.type === 'success'
-                          ? 'bg-emerald-950/40 border-emerald-800/60 text-emerald-300'
-                          : testStatus.type === 'warning'
-                          ? 'bg-amber-950/40 border-amber-800/60 text-amber-300'
-                          : testStatus.type === 'error'
-                          ? 'bg-rose-950/40 border-rose-800/60 text-rose-300'
-                          : 'bg-slate-900 border-slate-800 text-slate-300'
-                      }`}
-                    >
-                      {testStatus.type === 'success' ? (
-                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                      ) : testStatus.type === 'warning' ? (
-                        <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                      ) : (
-                        <HelpCircle className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
-                      )}
-                      <div>
-                        <div className="font-semibold">{testStatus.message}</div>
-                        {testStatus.detail && (
-                          <div className="text-[11px] opacity-80 mt-0.5 font-sans leading-relaxed">
-                            {testStatus.detail}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
+                  {/* Toggle Button */}
+                  <div className="flex items-center gap-3">
+                    {onToggleRealTime && (
+                      <button
+                        type="button"
+                        onClick={() => onToggleRealTime(!isRealTimeEnabled)}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-hidden ${
+                          isRealTimeEnabled ? 'bg-emerald-600' : 'bg-slate-700'
+                        }`}
+                        title={isRealTimeEnabled ? 'Matikan Real-time Sync' : 'Aktifkan Real-time Sync'}
+                      >
+                        <span
+                          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                            isRealTimeEnabled ? 'translate-x-6' : 'translate-x-1'
+                          }`}
+                        />
+                      </button>
+                    )}
+                  </div>
                 </div>
 
-                {/* Additional Web App Actions (If Web App URL) */}
-                {isWebAppUrl && (
-                  <div className="pt-2 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                      <span className="text-slate-300 font-semibold text-xs">Web App API Terdeteksi:</span>
+                {/* Interval and Status controls */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-800">
+                  <div className="flex items-center justify-between p-2.5 rounded-lg bg-slate-900/90 border border-slate-800">
+                    <div className="flex items-center gap-2 text-slate-300 text-xs">
+                      <Timer className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>Interval Pembaruan:</span>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={handleImportData}
-                        disabled={testStatus.type === 'loading'}
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors shadow-xs disabled:opacity-50"
+                    {onChangeRealTimeInterval && (
+                      <select
+                        value={realTimeInterval}
+                        onChange={(e) => onChangeRealTimeInterval(Number(e.target.value))}
+                        disabled={!isRealTimeEnabled}
+                        className="bg-slate-800 border border-slate-700 text-cyan-300 rounded-md px-2 py-1 text-xs font-mono focus:outline-hidden disabled:opacity-50"
                       >
-                        <DownloadCloud className="w-3.5 h-3.5" />
-                        <span>Tarik / Import Data dari Sheets</span>
-                      </button>
-                    </div>
+                        <option value={5000}>5 detik (Super Cepat)</option>
+                        <option value={10000}>10 detik (Rekomendasi)</option>
+                        <option value={30000}>30 detik</option>
+                        <option value={60000}>1 menit</option>
+                      </select>
+                    )}
                   </div>
-                )}
+
+                  <div className="flex items-center justify-between p-2.5 rounded-lg bg-slate-900/90 border border-slate-800">
+                    <div className="flex items-center gap-2 text-slate-300 text-xs">
+                      <Clock className="w-3.5 h-3.5 text-slate-400" />
+                      <span>Terakhir Diperbarui:</span>
+                    </div>
+                    <span className="font-mono text-xs text-emerald-400">
+                      {lastSyncTime ? lastSyncTime.toLocaleTimeString() : 'Belum pernah'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between text-[11px] text-slate-400 bg-slate-900/60 p-2.5 rounded-lg border border-slate-800/80">
+                  <div className="flex items-center gap-1.5">
+                    <Activity className="w-3.5 h-3.5 text-emerald-400" />
+                    <span><strong>Auto Tab-Focus Sync:</strong> Data langsung disinkronkan saat Anda kembali ke tab ini dari Google Sheets.</span>
+                  </div>
+                  {onSyncNow && (
+                    <button
+                      type="button"
+                      onClick={() => onSyncNow()}
+                      disabled={isSyncing}
+                      className="px-2.5 py-1 text-xs font-semibold text-cyan-300 bg-cyan-950/70 border border-cyan-800 hover:bg-cyan-900/80 rounded-md transition-colors shrink-0 disabled:opacity-50"
+                    >
+                      {isSyncing ? 'Sinkron...' : 'Sync Sekarang'}
+                    </button>
+                  )}
+                </div>
               </div>
+
+              {/* Status Feedback Banner */}
+              {testStatus.message && (
+                <div
+                  className={`p-3 rounded-xl border text-xs font-mono flex items-start gap-2.5 ${
+                    testStatus.type === 'success'
+                      ? 'bg-emerald-950/40 border-emerald-800/60 text-emerald-300'
+                      : testStatus.type === 'warning'
+                      ? 'bg-amber-950/40 border-amber-800/60 text-amber-300'
+                      : testStatus.type === 'error'
+                      ? 'bg-rose-950/40 border-rose-800/60 text-rose-300'
+                      : 'bg-slate-900 border-slate-800 text-slate-300'
+                  }`}
+                >
+                  {testStatus.type === 'success' ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                  ) : testStatus.type === 'warning' ? (
+                    <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  ) : (
+                    <HelpCircle className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
+                  )}
+                  <div>
+                    <div className="font-semibold">{testStatus.message}</div>
+                    {testStatus.detail && (
+                      <div className="text-[11px] opacity-80 mt-0.5 font-sans leading-relaxed">
+                        {testStatus.detail}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {/* Guide on How to Get the Link */}
               <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800 space-y-2.5">
