@@ -29,8 +29,8 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
     if (recordToEdit) {
       setName(recordToEdit.name);
       setGroup(recordToEdit.group);
-      setAbsensi(recordToEdit.absensi);
-      setDowntime(recordToEdit.downtime);
+      setAbsensi(recordToEdit.absensi ?? 100);
+      setDowntime(recordToEdit.downtime ?? 50);
       setFiveR(recordToEdit.fiveR ?? 80);
       setPmCompletion(recordToEdit.pmCompletion ?? 80);
       setNotes(recordToEdit.notes ?? '');

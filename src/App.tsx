@@ -19,7 +19,12 @@ import {
   Radio,
   ExternalLink,
 } from 'lucide-react';
-import { INITIAL_MONTHS, INITIAL_RECORDS } from './data/initialData';
+import {
+  INITIAL_MONTHS,
+  INITIAL_RECORDS,
+  sanitizeRecordsToOfficial17,
+  applyImportedToOfficialRecords,
+} from './data/initialData';
 import {
   AppraisalRecord,
   MonthConfig,
@@ -57,11 +62,16 @@ export default function App() {
     return INITIAL_MONTHS;
   });
 
-  // Load stored records or fallback to default
+  // Load stored records and sanitize strictly to 17 official team members per month
   const [records, setRecords] = useState<AppraisalRecord[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY_RECORDS);
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return sanitizeRecordsToOfficial17(parsed, INITIAL_MONTHS);
+        }
+      }
     } catch (e) {
       console.error(e);
     }
@@ -170,25 +180,29 @@ export default function App() {
 
   const handleImportRecords = (importedRecords: AppraisalRecord[]) => {
     setRecords((prev) => {
-      const formatted: AppraisalRecord[] = importedRecords.map((r, idx) => {
-        // Jika monthId tidak terdaftar, arahkan ke currentMonth.id
-        const isKnownMonth = months.some((m) => m.id === r.monthId);
-        const resolvedMonthId = isKnownMonth ? (r.monthId || currentMonth.id) : currentMonth.id;
-        const targetMonth = months.find((m) => m.id === resolvedMonthId) || currentMonth;
+      return applyImportedToOfficialRecords(prev, importedRecords, months, currentMonth.id);
+    });
+  };
 
-        return {
-          ...r,
-          id: r.id || `${resolvedMonthId}-imp-${Date.now()}-${idx}`,
-          monthId: resolvedMonthId,
-          finalScore: r.finalScore ?? calculateFinalScore(r, targetMonth),
-        };
-      });
-
-      const incomingKeys = new Set(formatted.map((f) => `${f.monthId}_${f.name.toLowerCase()}`));
-      const kept = prev.filter(
-        (p) => !incomingKeys.has(`${p.monthId}_${p.name.toLowerCase()}`)
-      );
-      return [...kept, ...formatted];
+  const handleClearCurrentMonthScores = () => {
+    setRecords((prev) =>
+      prev.map((r) =>
+        r.monthId === currentMonth.id
+          ? {
+              ...r,
+              absensi: null,
+              downtime: null,
+              pmCompletion: null,
+              fiveR: null,
+              finalScore: null,
+              notes: '',
+            }
+          : r
+      )
+    );
+    setSyncFeedback({
+      type: 'success',
+      message: `Nilai periode ${currentMonth.name} berhasil dikosongkan. 17 data anggota tim siap diisi/disinkronkan.`,
     });
   };
 
@@ -562,6 +576,17 @@ export default function App() {
                 <Sliders className="w-3.5 h-3.5 text-indigo-400" />
                 <span className="hidden sm:inline">Atur Bobot ({currentMonth.name})</span>
                 <span className="sm:hidden">Bobot</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleClearCurrentMonthScores}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-amber-300 bg-amber-950/60 border border-amber-800/80 rounded-lg hover:bg-amber-900/80 hover:text-amber-100 transition-colors shadow-2xs"
+                title={`Kosongkan nilai penilaian untuk ${currentMonth.name} (tetap 17 anggota tim)`}
+              >
+                <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
+                <span className="hidden xl:inline">Kosongkan Nilai ({currentMonth.name})</span>
+                <span className="xl:hidden">Kosongkan</span>
               </button>
 
               <button

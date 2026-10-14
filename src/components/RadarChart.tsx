@@ -70,10 +70,11 @@ export const RadarChart: React.FC<RadarChartProps> = ({
   const totalAxes = axes.length;
 
   // Convert polar coordinates to Cartesian
-  const getCoordinates = (index: number, value: number, radiusMax = maxRadius) => {
+  const getCoordinates = (index: number, value: number | null | undefined, radiusMax = maxRadius) => {
     // 0 index at top (-PI/2), evenly spaced
+    const safeValue = value ?? 0;
     const angle = (Math.PI * 2 * index) / totalAxes - Math.PI / 2;
-    const r = (Math.max(0, Math.min(100, value)) / 100) * radiusMax;
+    const r = (Math.max(0, Math.min(100, safeValue)) / 100) * radiusMax;
     return {
       x: cx + r * Math.cos(angle),
       y: cy + r * Math.sin(angle),

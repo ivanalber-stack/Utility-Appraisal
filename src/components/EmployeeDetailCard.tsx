@@ -43,26 +43,27 @@ export const EmployeeDetailCard: React.FC<EmployeeDetailCardProps> = ({
     (r) => r.monthId === currentMonth.id && r.group === currentRecord.group
   );
 
+  const groupAssessed = sameGroupRecords.filter((r) => r.absensi !== null && r.downtime !== null);
   const groupAverage = {
     absensi: Math.round(
-      sameGroupRecords.reduce((acc, r) => acc + r.absensi, 0) /
-        (sameGroupRecords.length || 1)
+      groupAssessed.reduce((acc, r) => acc + (r.absensi ?? 0), 0) /
+        (groupAssessed.length || 1)
     ),
     downtime: Math.round(
-      sameGroupRecords.reduce((acc, r) => acc + r.downtime, 0) /
-        (sameGroupRecords.length || 1)
+      groupAssessed.reduce((acc, r) => acc + (r.downtime ?? 0), 0) /
+        (groupAssessed.length || 1)
     ),
     specialMetric: Math.round(
-      sameGroupRecords.reduce((acc, r) => {
+      groupAssessed.reduce((acc, r) => {
         if (r.group === 'PM') {
           return acc + (r.pmCompletion ?? 0);
         }
         return acc + (r.fiveR ?? 0);
-      }, 0) / (sameGroupRecords.length || 1)
+      }, 0) / (groupAssessed.length || 1)
     ),
   };
 
-  const finalScore = calculateFinalScore(currentRecord, currentMonth);
+  const finalScore = currentRecord.finalScore ?? calculateFinalScore(currentRecord, currentMonth);
 
   const isPM = currentRecord.group === 'PM';
 
@@ -89,14 +90,14 @@ export const EmployeeDetailCard: React.FC<EmployeeDetailCardProps> = ({
     isPM
       ? {
           name: 'PM Completion',
-          score: currentRecord.pmCompletion ?? 0,
+          score: currentRecord.pmCompletion,
           weight: currentMonth.weightsPM.pmCompletion,
           notes: 'Penyelesaian rencana kerja Preventive Maintenance',
           avg: groupAverage.specialMetric,
         }
       : {
           name: '5R (Ringkas, Rapi, Resik, Rawat, Rajin)',
-          score: currentRecord.fiveR ?? 0,
+          score: currentRecord.fiveR,
           weight: currentMonth.weightsAD.fiveR,
           notes: 'Penerapan budaya 5R di area kerja lini',
           avg: groupAverage.specialMetric,
@@ -125,7 +126,10 @@ export const EmployeeDetailCard: React.FC<EmployeeDetailCardProps> = ({
   }[];
 
   // Recommendations based on lowest KPI
-  const lowestScoreItem = [...criteriaRows].sort((a, b) => a.score - b.score)[0];
+  const lowestScoreItem =
+    [...criteriaRows]
+      .filter((item) => item.score !== null && item.score !== undefined)
+      .sort((a, b) => (a.score ?? 0) - (b.score ?? 0))[0] || criteriaRows[0];
 
   return (
     <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xs overflow-hidden flex flex-col">
@@ -162,9 +166,9 @@ export const EmployeeDetailCard: React.FC<EmployeeDetailCardProps> = ({
             <span className="text-[10px] text-slate-400 block font-medium">Nilai Akhir</span>
             <div className="flex items-baseline gap-1 justify-end">
               <span className="font-mono text-2xl font-bold text-white tabular-nums">
-                {finalScore}
+                {finalScore !== null && finalScore !== undefined ? finalScore : '-'}
               </span>
-              <span className="text-xs text-slate-400 font-medium">/ 100</span>
+              <span className="text-xs text-slate-400 font-medium">{finalScore !== null && finalScore !== undefined ? '/ 100' : ''}</span>
             </div>
           </div>
           <button
@@ -225,8 +229,10 @@ export const EmployeeDetailCard: React.FC<EmployeeDetailCardProps> = ({
 
         <div className="space-y-2.5">
           {criteriaRows.map((item, idx) => {
-            const contribution = Math.round(((item.score * item.weight) / 100) * 10) / 10;
-            const isTargetMet = item.score >= 80;
+            const hasScore = item.score !== null && item.score !== undefined;
+            const numericScore: number = hasScore ? (item.score as number) : 0;
+            const contribution = hasScore ? Math.round(((numericScore * item.weight) / 100) * 10) / 10 : null;
+            const isTargetMet = hasScore && numericScore >= 80;
 
             return (
               <div
@@ -240,7 +246,7 @@ export const EmployeeDetailCard: React.FC<EmployeeDetailCardProps> = ({
                       Bobot: <strong className="text-slate-200">{item.weight}%</strong>
                     </span>
                     <span className="font-mono font-bold text-white tabular-nums">
-                      {item.score} / 100
+                      {hasScore ? `${item.score} / 100` : <span className="text-slate-500 font-normal italic">Belum diisi</span>}
                     </span>
                   </div>
                 </div>
@@ -249,15 +255,17 @@ export const EmployeeDetailCard: React.FC<EmployeeDetailCardProps> = ({
                 <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden relative">
                   <div
                     className={`h-full rounded-full transition-all duration-500 ${
-                      item.score >= 90
+                      !hasScore
+                        ? 'bg-transparent'
+                        : numericScore >= 90
                         ? 'bg-emerald-500'
-                        : item.score >= 80
+                        : numericScore >= 80
                         ? 'bg-blue-500'
-                        : item.score >= 70
+                        : numericScore >= 70
                         ? 'bg-amber-500'
                         : 'bg-rose-500'
                     }`}
-                    style={{ width: `${Math.min(100, item.score)}%` }}
+                    style={{ width: `${Math.min(100, numericScore)}%` }}
                   />
                   {/* Target 80 line */}
                   <div
@@ -268,9 +276,15 @@ export const EmployeeDetailCard: React.FC<EmployeeDetailCardProps> = ({
                 </div>
 
                 <div className="flex items-center justify-between text-[11px] text-slate-400 mt-1.5">
-                  <span>Kontribusi skor akhir: +{contribution} poin</span>
-                  <span className={isTargetMet ? 'text-emerald-400 font-medium' : 'text-amber-400 font-medium'}>
-                    {isTargetMet ? 'Target tercapai (≥80)' : 'Di bawah target (<80)'}
+                  <span>{contribution !== null ? `Kontribusi skor akhir: +${contribution} poin` : 'Belum ada kontribusi'}</span>
+                  <span>
+                    {!hasScore ? (
+                      <span className="text-slate-500 italic">Nilai masih kosong</span>
+                    ) : isTargetMet ? (
+                      <span className="text-emerald-400 font-medium">Target tercapai (≥80)</span>
+                    ) : (
+                      <span className="text-amber-400 font-medium">Di bawah target (&lt;80)</span>
+                    )}
                   </span>
                 </div>
               </div>

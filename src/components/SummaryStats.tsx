@@ -17,25 +17,33 @@ export const SummaryStats: React.FC<SummaryStatsProps> = ({
 
   const totalEmployees = monthRecords.length;
 
-  const averageScore = totalEmployees
+  const assessedRecords = monthRecords.filter((r) => {
+    const s = r.finalScore ?? calculateFinalScore(r, currentMonth);
+    return s !== null && s !== undefined && !isNaN(s);
+  });
+
+  const averageScore = assessedRecords.length
     ? Math.round(
-        (monthRecords.reduce(
-          (acc, r) => acc + calculateFinalScore(r, currentMonth),
+        (assessedRecords.reduce(
+          (acc, r) => acc + (r.finalScore ?? calculateFinalScore(r, currentMonth) ?? 0),
           0
         ) /
-          totalEmployees) *
+          assessedRecords.length) *
           10
       ) / 10
-    : 0;
+    : null;
 
-  const topPerformer = [...monthRecords].sort(
-    (a, b) =>
-      calculateFinalScore(b, currentMonth) - calculateFinalScore(a, currentMonth)
-  )[0];
+  const topPerformer = assessedRecords.length
+    ? [...assessedRecords].sort(
+        (a, b) =>
+          (b.finalScore ?? calculateFinalScore(b, currentMonth) ?? 0) -
+          (a.finalScore ?? calculateFinalScore(a, currentMonth) ?? 0)
+      )[0]
+    : null;
 
   const topPerformerScore = topPerformer
-    ? calculateFinalScore(topPerformer, currentMonth)
-    : 0;
+    ? (topPerformer.finalScore ?? calculateFinalScore(topPerformer, currentMonth))
+    : null;
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 mb-6">
@@ -61,9 +69,9 @@ export const SummaryStats: React.FC<SummaryStatsProps> = ({
           <p className="text-xs font-medium text-slate-400">Rata-rata Skor Bulan Ini</p>
           <div className="flex items-baseline gap-2 mt-1">
             <span className="text-2xl font-bold font-mono tracking-tight text-white tabular-nums">
-              {averageScore}
+              {averageScore !== null ? averageScore : '-'}
             </span>
-            <span className="text-xs text-slate-400">/ 100</span>
+            <span className="text-xs text-slate-400">{averageScore !== null ? '/ 100' : '(Belum dinilai)'}</span>
           </div>
         </div>
         <div className="w-10 h-10 rounded-xl bg-emerald-950/80 border border-emerald-800/50 flex items-center justify-center text-emerald-400">
@@ -77,10 +85,14 @@ export const SummaryStats: React.FC<SummaryStatsProps> = ({
           <p className="text-xs font-medium text-slate-400">Top Performer</p>
           <div className="mt-1">
             <p className="text-sm font-bold text-white truncate">
-              {topPerformer ? topPerformer.name : '-'}
+              {topPerformer ? topPerformer.name : 'Belum Ada Penilaian'}
             </p>
             <p className="text-xs text-slate-400 font-mono">
-              Skor: <span className="font-semibold text-indigo-400">{topPerformerScore}</span> (Group {topPerformer?.group})
+              {topPerformer && topPerformerScore !== null ? (
+                <>Skor: <span className="font-semibold text-indigo-400">{topPerformerScore}</span> (Group {topPerformer.group})</>
+              ) : (
+                <span className="text-slate-500 italic">Nilai masih kosong</span>
+              )}
             </p>
           </div>
         </div>

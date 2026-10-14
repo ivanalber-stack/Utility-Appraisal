@@ -74,17 +74,24 @@ export const AppraisalTable: React.FC<AppraisalTableProps> = ({
         const matchesGroup = activeGroupFilter === 'ALL' || r.group === activeGroupFilter;
         return matchesName && matchesGroup;
       })
-      .map((r) => ({
-        ...r,
-        finalScore: calculateFinalScore(r, currentMonth),
-      }))
+      .map((r) => {
+        const hasCriteria =
+          r.absensi !== null &&
+          r.absensi !== undefined &&
+          r.downtime !== null &&
+          r.downtime !== undefined;
+        return {
+          ...r,
+          finalScore: hasCriteria ? (r.finalScore ?? calculateFinalScore(r, currentMonth)) : null,
+        };
+      })
       .sort((a, b) => {
         let valA: string | number = a[sortField as keyof typeof a] ?? 0;
         let valB: string | number = b[sortField as keyof typeof b] ?? 0;
 
         if (sortField === 'score') {
-          valA = a.finalScore;
-          valB = b.finalScore;
+          valA = a.finalScore ?? -1;
+          valB = b.finalScore ?? -1;
         }
 
         if (typeof valA === 'string' && typeof valB === 'string') {
@@ -134,8 +141,14 @@ export const AppraisalTable: React.FC<AppraisalTableProps> = ({
       {/* Table Controls Header */}
       <div className="p-4 border-b border-slate-800 bg-slate-900/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
+          {/* 17 Anggota Tim Resmi Badge */}
+          <div className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-800/90 border border-slate-700/80 rounded-lg text-xs font-semibold text-slate-200">
+            <span className="w-1.5 h-1.5 rounded-full bg-indigo-400"></span>
+            <span>17 Tim Resmi ({currentMonth.name})</span>
+          </div>
+
           {/* Search box */}
-          <div className="relative min-w-[200px]">
+          <div className="relative min-w-[180px]">
             <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
@@ -350,14 +363,22 @@ export const AppraisalTable: React.FC<AppraisalTableProps> = ({
                       </span>
                     </td>
                     <td className="py-2.5 px-3 text-right font-mono tabular-nums text-slate-300">
-                      {rec.absensi}
+                      {rec.absensi !== null && rec.absensi !== undefined ? (
+                        rec.absensi
+                      ) : (
+                        <span className="text-slate-600 select-none">-</span>
+                      )}
                     </td>
                     <td className="py-2.5 px-3 text-right font-mono tabular-nums text-slate-300">
-                      {rec.downtime}
+                      {rec.downtime !== null && rec.downtime !== undefined ? (
+                        rec.downtime
+                      ) : (
+                        <span className="text-slate-600 select-none">-</span>
+                      )}
                     </td>
                     {/* PM Completion: shown for PM, dash for A-D */}
                     <td className="py-2.5 px-3 text-right font-mono tabular-nums">
-                      {isPM && rec.pmCompletion !== null ? (
+                      {isPM && rec.pmCompletion !== null && rec.pmCompletion !== undefined ? (
                         <span className="font-semibold text-amber-400">
                           {rec.pmCompletion}
                         </span>
@@ -367,15 +388,19 @@ export const AppraisalTable: React.FC<AppraisalTableProps> = ({
                     </td>
                     {/* 5R: shown for A-D, dash for PM */}
                     <td className="py-2.5 px-3 text-right font-mono tabular-nums">
-                      {!isPM && rec.fiveR !== null ? (
+                      {!isPM && rec.fiveR !== null && rec.fiveR !== undefined ? (
                         <span className="text-slate-300">{rec.fiveR}</span>
                       ) : (
                         <span className="text-slate-600 select-none">-</span>
                       )}
                     </td>
                     {/* Final Weighted Score */}
-                    <td className="py-2.5 px-3.5 text-right font-mono tabular-nums font-bold text-white">
-                      {rec.finalScore}
+                    <td className="py-2.5 px-3.5 text-right font-mono tabular-nums font-bold">
+                      {rec.finalScore !== null && rec.finalScore !== undefined ? (
+                        <span className="text-white">{rec.finalScore}</span>
+                      ) : (
+                        <span className="text-slate-500 font-normal select-none text-[11px]">-</span>
+                      )}
                     </td>
                     {/* Actions */}
                     <td className="py-2.5 px-3 text-center whitespace-nowrap" onClick={(e) => e.stopPropagation()}>

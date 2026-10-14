@@ -1,8 +1,8 @@
 import { AppraisalRecord, EmployeeGroup, MonthConfig, calculateFinalScore } from '../types/appraisal';
+import { matchOfficialMember } from '../data/initialData';
 
 /**
  * Ekstrak ID Spreadsheet dari URL Google Sheets
- * Contoh: https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit#gid=0
  */
 export function extractSpreadsheetId(url: string): string | null {
   if (!url) return null;
@@ -12,18 +12,52 @@ export function extractSpreadsheetId(url: string): string | null {
 
 /**
  * Membersihkan angka dari format persentase, koma, dsb.
+ * Mengembalikan null jika sel kosong, "-", atau bukan angka.
  */
-export function cleanNumber(val: unknown): number {
-  if (val === null || val === undefined || val === '' || val === '-' || val === 'N/A') return 0;
-  if (typeof val === 'number') return isNaN(val) ? 0 : val;
+export function parseNullableNumber(val: unknown): number | null {
+  if (val === null || val === undefined) return null;
+  if (typeof val === 'number') return isNaN(val) ? null : val;
   const str = String(val).trim().replace('%', '').replace(',', '.');
+  if (str === '' || str === '-' || str.toLowerCase() === 'n/a' || str.toLowerCase() === 'null') {
+    return null;
+  }
   const parsed = parseFloat(str);
-  return isNaN(parsed) ? 0 : parsed;
+  return isNaN(parsed) ? null : parsed;
 }
 
 /**
- * Mengambil data secara langsung dari Google Spreadsheet publik melalui Google Visualization API (GViz)
- * Mendukung real-time tanpa perlu deployment Apps Script jika Spreadsheet dibagikan ("Siapa saja yang memiliki link")
+ * Normalisasi nama bulan menjadi monthId (contoh: "Oktober 2026" -> "2026-10")
+ */
+export function normalizeMonthToId(monthStr: string, fallbackId: string): string {
+  if (!monthStr) return fallbackId;
+  const m = monthStr.toLowerCase().trim();
+  if (m.includes('sep') || m.includes('09')) return '2026-09';
+  if (m.includes('okt') || m.includes('oct') || m.includes('10')) return '2026-10';
+  if (m.includes('nov') || m.includes('11')) return '2026-11';
+  if (m.includes('des') || m.includes('dec') || m.includes('12')) return '2026-12';
+  if (m.includes('jan') || m.includes('01')) return '2027-01';
+  if (m.includes('feb') || m.includes('02')) return '2027-02';
+  if (m.includes('mar') || m.includes('03')) return '2027-03';
+  if (m.includes('apr') || m.includes('04')) return '2027-04';
+  if (m.includes('mei') || m.includes('may') || m.includes('05')) return '2027-05';
+  if (m.includes('jun') || m.includes('06')) return '2027-06';
+  if (m.includes('jul') || m.includes('07')) return '2027-07';
+  if (m.includes('agu') || m.includes('aug') || m.includes('08')) return '2027-08';
+  return fallbackId;
+}
+
+interface GVizCell {
+  v?: unknown;
+  f?: string;
+}
+
+interface GVizRow {
+  c?: (GVizCell | null)[];
+}
+
+/**
+ * Mengambil data secara langsung dari Google Spreadsheet publik melalui Google Visualization API (GViz).
+ * Menjamin hanya 17 anggota tim resmi yang diproses, mengikuti kolom Bulan, dan menjaga nilai kosong tetap null.
  */
 export async function fetchFromGoogleSheetGViz(
   spreadsheetUrl: string,
@@ -34,12 +68,12 @@ export async function fetchFromGoogleSheetGViz(
     throw new Error('Link Google Spreadsheet tidak valid. Pastikan link memiliki format https://docs.google.com/spreadsheets/d/...');
   }
 
-  // Coba ambil via gviz endpoint
+  // Gunakan timestamp untuk cache-busting agar real-time
   const gvizUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json&t=${Date.now()}`;
   
   const res = await fetch(gvizUrl);
   if (!res.ok) {
-    throw new Error(`Gagal membaca Google Spreadsheet (Status: ${res.status}). Pastikan hak akses Spreadsheet diatur ke "Siapa saja yang memiliki link dapat melihat" (Anyone with the link can view).`);
+    throw new Error(`Gagal membaca Google Spreadsheet (Status: ${res.status}). Pastikan hak akses Spreadsheet diatur ke "Siapa saja yang memiliki link dapat melihat".`);
   }
 
   const text = await res.text();
@@ -56,10 +90,12 @@ export async function fetchFromGoogleSheetGViz(
     throw new Error('Tidak ada data tabel yang ditemukan di Google Spreadsheet.');
   }
 
-  const cols: string[] = data.table.cols.map((c: { label?: string; id?: string }) => (c?.label || c?.id || '').toLowerCase().trim());
-  
-  // Mapping kolom
+  const rows: GVizRow[] = data.table.rows;
+  const cols = data.table.cols;
+
+  // Mapping index kolom
   const colMap = {
+    bulan: -1,
     name: -1,
     group: -1,
     absensi: -1,
@@ -70,37 +106,63 @@ export async function fetchFromGoogleSheetGViz(
     notes: -1,
   };
 
-  cols.forEach((colName, idx) => {
-    if (colName.includes('nama') || colName === 'name' || colName === 'karyawan') colMap.name = idx;
+  // 1. Cek cols metadata dari GViz
+  cols.forEach((c: { label?: string; id?: string }, idx: number) => {
+    const colName = (c?.label || c?.id || '').toLowerCase().trim();
+    if (colName.includes('bulan') || colName.includes('month') || colName.includes('periode')) colMap.bulan = idx;
+    else if (colName.includes('nama') || colName === 'name' || colName === 'karyawan') colMap.name = idx;
     else if (colName.includes('group') || colName.includes('grup') || colName === 'grp') colMap.group = idx;
     else if (colName.includes('absen')) colMap.absensi = idx;
     else if (colName.includes('down')) colMap.downtime = idx;
     else if (colName.includes('pm') && !colName.includes('group')) colMap.pmCompletion = idx;
     else if (colName.includes('5r') || colName.includes('5 r')) colMap.fiveR = idx;
-    else if (colName.includes('nilai') || colName.includes('akhir') || colName === 'total') colMap.nilaiAkhir = idx;
+    else if (colName.includes('nilai') || colName.includes('akhir') || colName === 'total' || colName === 'score') colMap.nilaiAkhir = idx;
     else if (colName.includes('catatan') || colName.includes('note') || colName.includes('ket')) colMap.notes = idx;
   });
 
-  // Jika baris pertama mungkin sebenarnya adalah label
-  const firstRow = data.table.rows[0];
+  // 2. Scan 5 baris pertama untuk mencari baris header jika belum lengkap
   let startRowIndex = 0;
-  if (colMap.name === -1 && firstRow && Array.isArray(firstRow.c)) {
-    firstRow.c.forEach((cell: { v?: unknown } | null, idx: number) => {
-      const v = String(cell?.v || '').toLowerCase().trim();
-      if (v.includes('nama') || v === 'name' || v === 'karyawan') colMap.name = idx;
-      else if (v.includes('group') || v.includes('grup')) colMap.group = idx;
-      else if (v.includes('absen')) colMap.absensi = idx;
-      else if (v.includes('down')) colMap.downtime = idx;
-      else if (v.includes('pm') && !v.includes('group')) colMap.pmCompletion = idx;
-      else if (v.includes('5r') || v.includes('5 r')) colMap.fiveR = idx;
-      else if (v.includes('nilai') || v.includes('akhir')) colMap.nilaiAkhir = idx;
+  for (let r = 0; r < Math.min(5, rows.length); r++) {
+    const row = rows[r];
+    if (!row || !row.c) continue;
+
+    let matchedHeadersCount = 0;
+    row.c.forEach((cell, idx) => {
+      const v = String(cell?.v || cell?.f || '').toLowerCase().trim();
+      if (v.includes('bulan') || v.includes('month') || v.includes('periode')) {
+        colMap.bulan = idx;
+        matchedHeadersCount++;
+      } else if (v.includes('nama') || v === 'name' || v === 'karyawan') {
+        colMap.name = idx;
+        matchedHeadersCount++;
+      } else if (v.includes('group') || v.includes('grup') || v === 'grp') {
+        colMap.group = idx;
+        matchedHeadersCount++;
+      } else if (v.includes('absen')) {
+        colMap.absensi = idx;
+        matchedHeadersCount++;
+      } else if (v.includes('down')) {
+        colMap.downtime = idx;
+        matchedHeadersCount++;
+      } else if (v.includes('pm') && !v.includes('group')) {
+        colMap.pmCompletion = idx;
+        matchedHeadersCount++;
+      } else if (v.includes('5r') || v.includes('5 r')) {
+        colMap.fiveR = idx;
+        matchedHeadersCount++;
+      } else if (v.includes('nilai') || v.includes('akhir')) {
+        colMap.nilaiAkhir = idx;
+        matchedHeadersCount++;
+      }
     });
-    if (colMap.name !== -1) {
-      startRowIndex = 1;
+
+    if (matchedHeadersCount >= 2 && colMap.name !== -1) {
+      startRowIndex = r + 1;
+      break;
     }
   }
 
-  // Fallback index standar jika label kosong
+  // Fallbacks index jika nama tidak terdeteksi
   if (colMap.name === -1) colMap.name = cols.length > 1 ? 1 : 0;
   if (colMap.group === -1) colMap.group = colMap.name + 1;
   if (colMap.absensi === -1) colMap.absensi = colMap.group + 1;
@@ -110,55 +172,112 @@ export async function fetchFromGoogleSheetGViz(
   if (colMap.nilaiAkhir === -1) colMap.nilaiAkhir = colMap.fiveR + 1;
 
   const records: AppraisalRecord[] = [];
+  const seenEmployeesPerMonth: Record<string, boolean> = {};
 
-  for (let r = startRowIndex; r < data.table.rows.length; r++) {
-    const row = data.table.rows[r];
+  // Track bulan bagian saat ini (mendukung merged cells atau header per bagian bulan)
+  let currentSectionMonthId = currentMonth.id;
+
+  for (let r = startRowIndex; r < rows.length; r++) {
+    const row = rows[r];
     if (!row || !row.c) continue;
 
     const getVal = (idx: number): unknown => {
-      if (idx < 0 || idx >= row.c.length || !row.c[idx]) return null;
-      return row.c[idx].v ?? row.c[idx].f ?? null;
+      if (idx < 0 || idx >= row.c!.length || !row.c![idx]) return null;
+      return row.c![idx]!.v ?? row.c![idx]!.f ?? null;
     };
 
+    // Cek apakah baris ini adalah header seksi bulan (misal "BULAN OKTOBER 2026")
+    const rowFullText = row.c
+      .map((c) => String(c?.v || c?.f || ''))
+      .join(' ')
+      .trim();
+    if (rowFullText.toLowerCase().includes('bulan') || rowFullText.toLowerCase().includes('periode')) {
+      const detectedMonth = normalizeMonthToId(rowFullText, '');
+      if (detectedMonth) {
+        currentSectionMonthId = detectedMonth;
+      }
+    }
+
     const rawName = String(getVal(colMap.name) || '').trim();
-    if (!rawName || rawName === '-' || rawName.toLowerCase() === 'nama karyawan' || rawName.toLowerCase() === 'name') {
+    if (!rawName) continue;
+
+    // Pastikan baris ini adalah salah satu dari 17 anggota tim resmi TACO
+    const officialMember = matchOfficialMember(rawName);
+    if (!officialMember) {
+      // Baris ini bukan anggota tim (bisa jadi baris total, rata-rata, header, dll) -> Lewati!
       continue;
     }
 
+    // Tentukan bulan baris ini
+    let rowMonthId = currentSectionMonthId;
+    if (colMap.bulan !== -1) {
+      const rawMonthVal = String(getVal(colMap.bulan) || '').trim();
+      if (rawMonthVal) {
+        rowMonthId = normalizeMonthToId(rawMonthVal, currentSectionMonthId);
+        currentSectionMonthId = rowMonthId; // Simpan untuk baris berikutnya jika sel dimerge
+      }
+    }
+
+    // Cegah duplikasi anggota tim yang sama di bulan yang sama (maksimal tepat 17 orang per bulan)
+    const dedupKey = `${rowMonthId}_${officialMember.name.toLowerCase()}`;
+    if (seenEmployeesPerMonth[dedupKey]) {
+      continue;
+    }
+    seenEmployeesPerMonth[dedupKey] = true;
+
+    // Baca nilai kriteria
     const rawGrp = String(getVal(colMap.group) || '').trim().toUpperCase();
     const group: EmployeeGroup =
       rawGrp === 'PM' || rawGrp === 'A' || rawGrp === 'B' || rawGrp === 'C' || rawGrp === 'D'
         ? (rawGrp as EmployeeGroup)
-        : 'A';
+        : officialMember.group;
 
-    const absensi = cleanNumber(getVal(colMap.absensi));
-    const downtime = cleanNumber(getVal(colMap.downtime));
+    const absensi = parseNullableNumber(getVal(colMap.absensi));
+    const downtime = parseNullableNumber(getVal(colMap.downtime));
     
     const pmRaw = getVal(colMap.pmCompletion);
-    const pmCompletion = (pmRaw !== null && pmRaw !== '' && pmRaw !== '-') ? cleanNumber(pmRaw) : null;
+    const pmCompletion = parseNullableNumber(pmRaw);
     
     const f5Raw = getVal(colMap.fiveR);
-    const fiveR = (f5Raw !== null && f5Raw !== '' && f5Raw !== '-') ? cleanNumber(f5Raw) : (group !== 'PM' ? pmCompletion : null);
+    const fiveR = parseNullableNumber(f5Raw) ?? (group !== 'PM' ? pmCompletion : null);
 
     const nilaiAkhirRaw = getVal(colMap.nilaiAkhir);
-    const finalScoreVal = cleanNumber(nilaiAkhirRaw);
+    const finalScoreVal = parseNullableNumber(nilaiAkhirRaw);
+
+    // KUNCI: Cek apakah kriteria terisi. Jika kosong (misal di bulan Oktober), nilai akhir HARUS null!
+    const hasCriteria = absensi !== null && downtime !== null;
+
+    let finalScore: number | null = null;
+    if (hasCriteria) {
+      if (finalScoreVal !== null) {
+        finalScore = finalScoreVal;
+      } else {
+        const tempRecord: AppraisalRecord = {
+          id: `${rowMonthId}-${officialMember.idSuffix}`,
+          monthId: rowMonthId,
+          name: officialMember.name,
+          group,
+          absensi,
+          downtime,
+          pmCompletion: group === 'PM' ? pmCompletion : null,
+          fiveR: group !== 'PM' ? fiveR : null,
+        };
+        finalScore = calculateFinalScore(tempRecord, currentMonth);
+      }
+    }
 
     const record: AppraisalRecord = {
-      id: `${currentMonth.id}-gviz-${r + 1}`,
-      monthId: currentMonth.id,
-      name: rawName,
+      id: `${rowMonthId}-${officialMember.idSuffix}`,
+      monthId: rowMonthId,
+      name: officialMember.name,
       group,
       absensi,
       downtime,
-      pmCompletion: group === 'PM' ? (pmCompletion ?? 0) : null,
-      fiveR: group !== 'PM' ? (fiveR ?? 0) : null,
-      finalScore: finalScoreVal > 0 ? finalScoreVal : 0,
+      pmCompletion: group === 'PM' ? pmCompletion : null,
+      fiveR: group !== 'PM' ? fiveR : null,
+      finalScore,
       notes: String(getVal(colMap.notes) || ''),
     };
-
-    if (record.finalScore === 0) {
-      record.finalScore = calculateFinalScore(record, currentMonth);
-    }
 
     records.push(record);
   }
