@@ -31,7 +31,7 @@ var DEFAULT_WEIGHTS = {
   }
 };
 
-// 17 Anggota Tim Resmi Operasional TACO
+// 17 Anggota Tim Resmi Operasional TACO (Presisi & Terkunci 17 Orang)
 var OFFICIAL_MEMBERS = [
   { id: "1", name: "Shigit Darmawan", group: "B" },
   { id: "2", name: "Amrih Prayogo", group: "A" },
@@ -39,13 +39,13 @@ var OFFICIAL_MEMBERS = [
   { id: "4", name: "Tri Wanto", group: "D" },
   { id: "5", name: "Muhammad Sopiyan", group: "A" },
   { id: "6", name: "Armad", group: "B" },
-  { id: "7", name: "Angga Bastian", group: "C" },
-  { id: "8", name: "Joko Supriyanto", group: "D" },
-  { id: "9", name: "Muhammad Budi Prasetyo", group: "PM" },
-  { id: "10", name: "Ivan Alber", group: "PM" },
-  { id: "11", name: "Ade Setiawan", group: "A" },
-  { id: "12", name: "Sugiarto", group: "D" },
-  { id: "13", name: "Mohamad Syarif", group: "A" },
+  { id: "7", name: "Muhamad Fazri", group: "C" },
+  { id: "8", name: "Agung Maulana", group: "D" },
+  { id: "9", name: "Asep Jumhari", group: "PM" },
+  { id: "10", name: "Muhamad Adun", group: "D" },
+  { id: "11", name: "Muhammad Junudillah Rahman", group: "A" },
+  { id: "12", name: "Fahrul Hidayatullah", group: "B" },
+  { id: "13", name: "Jurais Ikhsan", group: "A" },
   { id: "14", name: "Damba", group: "B" },
   { id: "15", name: "Misnan", group: "C" },
   { id: "16", name: "Muhammad Rafi", group: "C" },
@@ -112,8 +112,8 @@ function testFungsi() {
   var testKosong = HITUNG_NILAI_AKHIR("B", "", "", "", "");
   Logger.log("[OK] Test Nilai Kosong -> Hasil: '" + testKosong + "' (Harus kosong/bersih)");
 
-  var testMember = cariMemberResmi("Ivan Alber");
-  Logger.log("[OK] Test Pencocokan Tim Resmi Ivan Alber -> " + (testMember ? "Ditemukan (" + testMember.group + ")" : "Gagal"));
+  var testMember = cariMemberResmi("Asep Jumhari");
+  Logger.log("[OK] Test Pencocokan Tim Resmi Asep Jumhari -> " + (testMember ? "Ditemukan (" + testMember.group + ")" : "Gagal"));
 
   Logger.log("STATUS: Script berjalan normal 100%! Siap digunakan.");
   return "Sukses! Script bekerja 100% normal.";
@@ -451,8 +451,9 @@ function doGet(e) {
         }
         seenEmployeesPerMonth[dedupKey] = true;
 
-        var grp = String(row[colMap.group] || "").trim().toUpperCase();
-        if (!grp) grp = official.group;
+        var isPM = official.group === "PM" || official.name.toLowerCase().indexOf("asep jumhari") !== -1;
+        var rawGrp = String(row[colMap.group] || "").trim().toUpperCase();
+        var grp = isPM ? "PM" : (["A", "B", "C", "D"].indexOf(rawGrp) !== -1 ? rawGrp : official.group);
 
         var abs = parseNullableAngka(row[colMap.absensi]);
         var down = parseNullableAngka(row[colMap.downtime]);
@@ -480,11 +481,11 @@ function doGet(e) {
           id: targetMonthId + "-emp-" + official.id,
           monthId: targetMonthId,
           name: official.name,
-          group: official.group,
+          group: grp,
           absensi: abs,
           downtime: down,
-          pmCompletion: official.group === "PM" ? pm : null,
-          fiveR: official.group !== "PM" ? f5 : null,
+          pmCompletion: grp === "PM" ? pm : null,
+          fiveR: grp !== "PM" ? f5 : null,
           finalScore: finalScore,
           notes: notes
         });

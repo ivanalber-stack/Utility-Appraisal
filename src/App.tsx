@@ -49,6 +49,7 @@ const STORAGE_KEY_APPSCRIPT_URL = 'taco_appraisal_appscript_url';
 const STORAGE_KEY_SPREADSHEET_URL = 'taco_appraisal_spreadsheet_url';
 const STORAGE_KEY_REALTIME_ENABLED = 'taco_appraisal_realtime_enabled';
 const STORAGE_KEY_REALTIME_INTERVAL = 'taco_appraisal_realtime_interval';
+const ROSTER_VERSION = 'v3.3_official_17';
 
 export default function App() {
   // Load stored months or fallback to default
@@ -65,6 +66,12 @@ export default function App() {
   // Load stored records and sanitize strictly to 17 official team members per month
   const [records, setRecords] = useState<AppraisalRecord[]>(() => {
     try {
+      const savedVersion = localStorage.getItem('taco_roster_version');
+      if (savedVersion !== ROSTER_VERSION) {
+        localStorage.setItem('taco_roster_version', ROSTER_VERSION);
+        localStorage.setItem(STORAGE_KEY_RECORDS, JSON.stringify(INITIAL_RECORDS));
+        return INITIAL_RECORDS;
+      }
       const saved = localStorage.getItem(STORAGE_KEY_RECORDS);
       if (saved) {
         const parsed = JSON.parse(saved);
@@ -203,6 +210,20 @@ export default function App() {
     setSyncFeedback({
       type: 'success',
       message: `Nilai periode ${currentMonth.name} berhasil dikosongkan. 17 data anggota tim siap diisi/disinkronkan.`,
+    });
+  };
+
+  const handleResetToOfficial17 = () => {
+    setRecords(INITIAL_RECORDS);
+    try {
+      localStorage.setItem('taco_roster_version', ROSTER_VERSION);
+      localStorage.setItem(STORAGE_KEY_RECORDS, JSON.stringify(INITIAL_RECORDS));
+    } catch (e) {
+      console.error(e);
+    }
+    setSyncFeedback({
+      type: 'success',
+      message: 'Berhasil mereset data ke 17 anggota tim resmi TACO (September terisi & Oktober kosong).',
     });
   };
 
@@ -856,6 +877,7 @@ export default function App() {
         onSyncNow={() => handleSyncFromGoogleSheets()}
         isSyncing={isSyncing}
         onImportRecords={handleImportRecords}
+        onResetToOfficial17={handleResetToOfficial17}
       />
     </div>
   );

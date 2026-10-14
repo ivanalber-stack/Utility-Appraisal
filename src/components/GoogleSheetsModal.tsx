@@ -46,6 +46,7 @@ interface GoogleSheetsModalProps {
   onSyncNow?: () => Promise<void>;
   isSyncing?: boolean;
   onImportRecords?: (importedRecords: AppraisalRecord[]) => void;
+  onResetToOfficial17?: () => void;
   initialTab?: 'link' | 'troubleshoot' | 'native' | 'code' | 'guide';
 }
 
@@ -66,6 +67,7 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
   onSyncNow,
   isSyncing = false,
   onImportRecords,
+  onResetToOfficial17,
   initialTab = 'link',
 }) => {
   const [activeTab, setActiveTab] = useState<'link' | 'troubleshoot' | 'native' | 'code' | 'guide'>(initialTab);
@@ -149,7 +151,7 @@ var DEFAULT_WEIGHTS = {
   }
 };
 
-// 17 Anggota Tim Resmi Operasional TACO
+// 17 Anggota Tim Resmi Operasional TACO (Presisi & Terkunci 17 Orang)
 var OFFICIAL_MEMBERS = [
   { id: "1", name: "Shigit Darmawan", group: "B" },
   { id: "2", name: "Amrih Prayogo", group: "A" },
@@ -157,13 +159,13 @@ var OFFICIAL_MEMBERS = [
   { id: "4", name: "Tri Wanto", group: "D" },
   { id: "5", name: "Muhammad Sopiyan", group: "A" },
   { id: "6", name: "Armad", group: "B" },
-  { id: "7", name: "Angga Bastian", group: "C" },
-  { id: "8", name: "Joko Supriyanto", group: "D" },
-  { id: "9", name: "Muhammad Budi Prasetyo", group: "PM" },
-  { id: "10", name: "Ivan Alber", group: "PM" },
-  { id: "11", name: "Ade Setiawan", group: "A" },
-  { id: "12", name: "Sugiarto", group: "D" },
-  { id: "13", name: "Mohamad Syarif", group: "A" },
+  { id: "7", name: "Muhamad Fazri", group: "C" },
+  { id: "8", name: "Agung Maulana", group: "D" },
+  { id: "9", name: "Asep Jumhari", group: "PM" },
+  { id: "10", name: "Muhamad Adun", group: "D" },
+  { id: "11", name: "Muhammad Junudillah Rahman", group: "A" },
+  { id: "12", name: "Fahrul Hidayatullah", group: "B" },
+  { id: "13", name: "Jurais Ikhsan", group: "A" },
   { id: "14", name: "Damba", group: "B" },
   { id: "15", name: "Misnan", group: "C" },
   { id: "16", name: "Muhammad Rafi", group: "C" },
@@ -500,8 +502,9 @@ function doGet(e) {
         if (seenEmployeesPerMonth[dedupKey]) continue;
         seenEmployeesPerMonth[dedupKey] = true;
 
-        var grp = String(row[colMap.group] || "").trim().toUpperCase();
-        if (!grp) grp = official.group;
+        var isPM = official.group === "PM" || official.name.toLowerCase().indexOf("asep jumhari") !== -1;
+        var rawGrp = String(row[colMap.group] || "").trim().toUpperCase();
+        var grp = isPM ? "PM" : (["A", "B", "C", "D"].indexOf(rawGrp) !== -1 ? rawGrp : official.group);
 
         var abs = parseNullableAngka(row[colMap.absensi]);
         var down = parseNullableAngka(row[colMap.downtime]);
@@ -527,11 +530,11 @@ function doGet(e) {
           id: targetMonthId + "-emp-" + official.id,
           monthId: targetMonthId,
           name: official.name,
-          group: official.group,
+          group: grp,
           absensi: abs,
           downtime: down,
-          pmCompletion: official.group === "PM" ? pm : null,
-          fiveR: official.group !== "PM" ? f5 : null,
+          pmCompletion: grp === "PM" ? pm : null,
+          fiveR: grp !== "PM" ? f5 : null,
           finalScore: finalScore,
           notes: notes
         });
@@ -1561,18 +1564,34 @@ function doGet(e) {
         </div>
 
         {/* Footer */}
-        <div className="p-4 border-t border-slate-800 bg-slate-950/80 flex items-center justify-between">
+        <div className="p-4 border-t border-slate-800 bg-slate-950/80 flex flex-col sm:flex-row items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-slate-400 text-xs">
             <Globe className="w-4 h-4 text-indigo-400" />
             <span>Link Aktif: {appsScriptUrl ? <strong className="text-emerald-400 font-mono text-[11px]">{appsScriptUrl.slice(0, 45)}...</strong> : <span className="italic">Belum diinput</span>}</span>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-1.5 text-xs font-semibold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors"
-          >
-            Tutup
-          </button>
+          <div className="flex items-center gap-2">
+            {onResetToOfficial17 && (
+              <button
+                type="button"
+                onClick={() => {
+                  onResetToOfficial17();
+                  onClose();
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-amber-300 hover:text-white bg-amber-950/60 hover:bg-amber-900/80 border border-amber-800/80 rounded-lg transition-colors"
+                title="Reset seluruh data lokal ke 17 anggota tim resmi TACO"
+              >
+                <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
+                <span>Reset ke 17 Tim Resmi</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-1.5 text-xs font-semibold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors"
+            >
+              Tutup
+            </button>
+          </div>
         </div>
       </div>
     </div>

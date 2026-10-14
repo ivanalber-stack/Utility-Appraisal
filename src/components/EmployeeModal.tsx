@@ -126,26 +126,38 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-1">
-              Group / Shift Operasional
-            </label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-xs font-semibold text-slate-300">
+                Group / Shift Operasional
+              </label>
+              <span className="text-[11px] text-slate-400">
+                {isPM ? 'Group PM Terkunci' : 'Group A - D dapat diubah sesuai sheet'}
+              </span>
+            </div>
             <div className="grid grid-cols-5 gap-2">
-              {(['A', 'B', 'C', 'D', 'PM'] as EmployeeGroup[]).map((grp) => (
-                <button
-                  key={grp}
-                  type="button"
-                  onClick={() => setGroup(grp)}
-                  className={`py-2 text-xs font-semibold rounded-lg border transition-all ${
-                    group === grp
-                      ? grp === 'PM'
-                        ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
-                        : 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
-                      : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200 hover:bg-slate-700/60'
-                  }`}
-                >
-                  {grp === 'PM' ? 'Group PM' : `Group ${grp}`}
-                </button>
-              ))}
+              {(['A', 'B', 'C', 'D', 'PM'] as EmployeeGroup[]).map((grp) => {
+                const isMemberAsep = Boolean(recordToEdit && (recordToEdit.name.toLowerCase().includes('asep jumhari') || recordToEdit.group === 'PM'));
+                const isDisabled = isMemberAsep ? grp !== 'PM' : grp === 'PM';
+                return (
+                  <button
+                    key={grp}
+                    type="button"
+                    disabled={isDisabled}
+                    onClick={() => setGroup(grp)}
+                    className={`py-2 text-xs font-semibold rounded-lg border transition-all ${
+                      group === grp
+                        ? grp === 'PM'
+                          ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
+                          : 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                        : isDisabled
+                        ? 'bg-slate-900/60 text-slate-600 border-slate-800 cursor-not-allowed opacity-40'
+                        : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200 hover:bg-slate-700/60'
+                    }`}
+                  >
+                    {grp === 'PM' ? 'Group PM' : `Group ${grp}`}
+                  </button>
+                );
+              })}
             </div>
           </div>
 

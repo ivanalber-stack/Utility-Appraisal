@@ -102,7 +102,7 @@ export const SEPTEMBER_RECORDS: AppraisalRecord[] = [
   {
     id: 'rec-sep-7',
     monthId: '2026-09',
-    name: 'Angga Bastian',
+    name: 'Muhamad Fazri',
     group: 'C',
     absensi: 87,
     downtime: 50,
@@ -113,18 +113,18 @@ export const SEPTEMBER_RECORDS: AppraisalRecord[] = [
   {
     id: 'rec-sep-8',
     monthId: '2026-09',
-    name: 'Joko Supriyanto',
+    name: 'Agung Maulana',
     group: 'D',
     absensi: 87,
     downtime: 50,
     pmCompletion: null,
     fiveR: 80,
-    notes: 'Perlu peningkatan kehadiran.',
+    notes: 'Perlu peningkatan kehadiran shift malam.',
   },
   {
     id: 'rec-sep-9',
     monthId: '2026-09',
-    name: 'Muhammad Budi Prasetyo',
+    name: 'Asep Jumhari',
     group: 'PM',
     absensi: 91,
     downtime: 60,
@@ -135,18 +135,18 @@ export const SEPTEMBER_RECORDS: AppraisalRecord[] = [
   {
     id: 'rec-sep-10',
     monthId: '2026-09',
-    name: 'Ivan Alber',
-    group: 'PM',
+    name: 'Muhamad Adun',
+    group: 'D',
     absensi: 91,
-    downtime: 60,
-    pmCompletion: 80,
-    fiveR: null,
-    notes: 'Penyelesaian PM 80%, downtime terkendali.',
+    downtime: 50,
+    pmCompletion: null,
+    fiveR: 80,
+    notes: 'Disiplin kerja baik, pemeliharaan area rapi.',
   },
   {
     id: 'rec-sep-11',
     monthId: '2026-09',
-    name: 'Ade Setiawan',
+    name: 'Muhammad Junudillah Rahman',
     group: 'A',
     absensi: 91,
     downtime: 50,
@@ -157,8 +157,8 @@ export const SEPTEMBER_RECORDS: AppraisalRecord[] = [
   {
     id: 'rec-sep-12',
     monthId: '2026-09',
-    name: 'Sugiarto',
-    group: 'D',
+    name: 'Fahrul Hidayatullah',
+    group: 'B',
     absensi: 100,
     downtime: 50,
     pmCompletion: null,
@@ -168,7 +168,7 @@ export const SEPTEMBER_RECORDS: AppraisalRecord[] = [
   {
     id: 'rec-sep-13',
     monthId: '2026-09',
-    name: 'Mohamad Syarif',
+    name: 'Jurais Ikhsan',
     group: 'A',
     absensi: 95,
     downtime: 50,
@@ -236,13 +236,13 @@ export const OFFICIAL_TEAM_MEMBERS: OfficialTeamMember[] = [
   { idSuffix: '4', name: 'Tri Wanto', group: 'D' },
   { idSuffix: '5', name: 'Muhammad Sopiyan', group: 'A' },
   { idSuffix: '6', name: 'Armad', group: 'B' },
-  { idSuffix: '7', name: 'Angga Bastian', group: 'C' },
-  { idSuffix: '8', name: 'Joko Supriyanto', group: 'D' },
-  { idSuffix: '9', name: 'Muhammad Budi Prasetyo', group: 'PM' },
-  { idSuffix: '10', name: 'Ivan Alber', group: 'PM' },
-  { idSuffix: '11', name: 'Ade Setiawan', group: 'A' },
-  { idSuffix: '12', name: 'Sugiarto', group: 'D' },
-  { idSuffix: '13', name: 'Mohamad Syarif', group: 'A' },
+  { idSuffix: '7', name: 'Muhamad Fazri', group: 'C' },
+  { idSuffix: '8', name: 'Agung Maulana', group: 'D' },
+  { idSuffix: '9', name: 'Asep Jumhari', group: 'PM' },
+  { idSuffix: '10', name: 'Muhamad Adun', group: 'D' },
+  { idSuffix: '11', name: 'Muhammad Junudillah Rahman', group: 'A' },
+  { idSuffix: '12', name: 'Fahrul Hidayatullah', group: 'B' },
+  { idSuffix: '13', name: 'Jurais Ikhsan', group: 'A' },
   { idSuffix: '14', name: 'Damba', group: 'B' },
   { idSuffix: '15', name: 'Misnan', group: 'C' },
   { idSuffix: '16', name: 'Muhammad Rafi', group: 'C' },
@@ -326,6 +326,7 @@ export const INITIAL_RECORDS: AppraisalRecord[] = [
 /**
  * Membersihkan data records agar SETIAP BULAN TEPAT MEMILIKI 17 KARYAWAN RESMI.
  * Menghilangkan baris berlebih, duplikat, atau nama yang bukan anggota tim.
+ * Mendukung perubahan Group A/B/C/D dinamis sesuai sheet, terkunci untuk PM.
  */
 export function sanitizeRecordsToOfficial17(
   rawRecords: AppraisalRecord[],
@@ -343,6 +344,14 @@ export function sanitizeRecordsToOfficial17(
         return m && m.name === official.name;
       });
 
+      const isPM = official.group === 'PM' || official.name.toLowerCase().includes('asep jumhari');
+      const matchedGroup = String(matched?.group || '').trim().toUpperCase();
+      const effectiveGroup: 'A' | 'B' | 'C' | 'D' | 'PM' = isPM
+        ? 'PM'
+        : ['A', 'B', 'C', 'D'].includes(matchedGroup)
+        ? (matchedGroup as 'A' | 'B' | 'C' | 'D')
+        : official.group;
+
       if (matched) {
         // Cek apakah kriteria terisi
         const hasCriteria =
@@ -356,7 +365,9 @@ export function sanitizeRecordsToOfficial17(
           id: matched.id || `rec-${month.id}-${official.idSuffix}`,
           monthId: month.id,
           name: official.name,
-          group: official.group,
+          group: effectiveGroup,
+          pmCompletion: effectiveGroup === 'PM' ? matched.pmCompletion : null,
+          fiveR: effectiveGroup !== 'PM' ? matched.fiveR : null,
           finalScore: hasCriteria ? matched.finalScore : null,
         });
       } else {
@@ -383,6 +394,7 @@ export function sanitizeRecordsToOfficial17(
 /**
  * Menerapkan data impor ke 17 anggota resmi per bulan.
  * Memastikan jumlah karyawan TIDAK PERNAH MELEBIHI 17 ORANG PER BULAN.
+ * Memungkinkan perubahan Group (A, B, C, D) dinamis mengikuti Google Sheet, kecuali PM (Asep Jumhari).
  */
 export function applyImportedToOfficialRecords(
   currentRecords: AppraisalRecord[],
@@ -402,12 +414,20 @@ export function applyImportedToOfficialRecords(
       ? imp.monthId
       : activeMonthId;
 
+    const isPM = matchedMember.group === 'PM' || matchedMember.name.toLowerCase().includes('asep jumhari');
+    const impGroup = String(imp.group || '').trim().toUpperCase();
+    const effectiveGroup: 'A' | 'B' | 'C' | 'D' | 'PM' = isPM
+      ? 'PM'
+      : ['A', 'B', 'C', 'D'].includes(impGroup)
+      ? (impGroup as 'A' | 'B' | 'C' | 'D')
+      : matchedMember.group;
+
     const key = `${targetMonthId}_${matchedMember.name.toLowerCase()}`;
     importMap.set(key, {
       ...imp,
       monthId: targetMonthId,
       name: matchedMember.name,
-      group: matchedMember.group,
+      group: effectiveGroup,
     });
   }
 
@@ -418,6 +438,7 @@ export function applyImportedToOfficialRecords(
     const currentMonthData = currentRecords.filter((r) => r.monthId === month.id);
 
     for (const official of OFFICIAL_TEAM_MEMBERS) {
+      const isPM = official.group === 'PM' || official.name.toLowerCase().includes('asep jumhari');
       const key = `${month.id}_${official.name.toLowerCase()}`;
       const imported = importMap.get(key);
 
@@ -429,15 +450,21 @@ export function applyImportedToOfficialRecords(
           imported.downtime !== null &&
           imported.downtime !== undefined;
 
+        const effectiveGroup = isPM
+          ? 'PM'
+          : ['A', 'B', 'C', 'D'].includes(imported.group)
+          ? imported.group
+          : official.group;
+
         updatedRecords.push({
           id: `rec-${month.id}-${official.idSuffix}`,
           monthId: month.id,
           name: official.name,
-          group: official.group,
+          group: effectiveGroup,
           absensi: imported.absensi,
           downtime: imported.downtime,
-          pmCompletion: official.group === 'PM' ? imported.pmCompletion : null,
-          fiveR: official.group !== 'PM' ? imported.fiveR : null,
+          pmCompletion: effectiveGroup === 'PM' ? imported.pmCompletion : null,
+          fiveR: effectiveGroup !== 'PM' ? imported.fiveR : null,
           finalScore: hasCriteria ? imported.finalScore : null,
           notes: imported.notes || '',
         });
@@ -455,12 +482,21 @@ export function applyImportedToOfficialRecords(
             existing.downtime !== null &&
             existing.downtime !== undefined;
 
+          const existingGroup = String(existing.group || '').trim().toUpperCase();
+          const effectiveGroup = isPM
+            ? 'PM'
+            : ['A', 'B', 'C', 'D'].includes(existingGroup)
+            ? (existingGroup as 'A' | 'B' | 'C' | 'D')
+            : official.group;
+
           updatedRecords.push({
             ...existing,
             id: existing.id || `rec-${month.id}-${official.idSuffix}`,
             monthId: month.id,
             name: official.name,
-            group: official.group,
+            group: effectiveGroup,
+            pmCompletion: effectiveGroup === 'PM' ? existing.pmCompletion : null,
+            fiveR: effectiveGroup !== 'PM' ? existing.fiveR : null,
             finalScore: hasCriteria ? existing.finalScore : null,
           });
         } else {

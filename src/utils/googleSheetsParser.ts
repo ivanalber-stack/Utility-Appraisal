@@ -225,12 +225,14 @@ export async function fetchFromGoogleSheetGViz(
     }
     seenEmployeesPerMonth[dedupKey] = true;
 
-    // Baca nilai kriteria
+    // Baca group: PM (Asep Jumhari) terkunci, anggota lain dinamis mengikuti sheet (A/B/C/D)
+    const isPM = officialMember.group === 'PM' || officialMember.name.toLowerCase().includes('asep jumhari');
     const rawGrp = String(getVal(colMap.group) || '').trim().toUpperCase();
-    const group: EmployeeGroup =
-      rawGrp === 'PM' || rawGrp === 'A' || rawGrp === 'B' || rawGrp === 'C' || rawGrp === 'D'
-        ? (rawGrp as EmployeeGroup)
-        : officialMember.group;
+    const group: EmployeeGroup = isPM
+      ? 'PM'
+      : rawGrp === 'A' || rawGrp === 'B' || rawGrp === 'C' || rawGrp === 'D'
+      ? (rawGrp as EmployeeGroup)
+      : officialMember.group;
 
     const absensi = parseNullableNumber(getVal(colMap.absensi));
     const downtime = parseNullableNumber(getVal(colMap.downtime));
