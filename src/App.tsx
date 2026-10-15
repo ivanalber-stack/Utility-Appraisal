@@ -18,6 +18,7 @@ import {
   CheckCircle2,
   Radio,
   ExternalLink,
+  Settings,
 } from 'lucide-react';
 import {
   INITIAL_MONTHS,
@@ -37,11 +38,10 @@ import { fetchFromGoogleSheetGViz } from './utils/googleSheetsParser';
 import { SummaryStats } from './components/SummaryStats';
 import { EmployeeDetailCard } from './components/EmployeeDetailCard';
 import { AppraisalTable } from './components/AppraisalTable';
-import { WeightSettingsModal } from './components/WeightSettingsModal';
+import { SettingsModal, SettingsTab } from './components/SettingsModal';
 import { NewMonthModal } from './components/NewMonthModal';
 import { EmployeeModal } from './components/EmployeeModal';
 import { TacoLogo } from './components/TacoLogo';
-import { GoogleSheetsModal } from './components/GoogleSheetsModal';
 
 const STORAGE_KEY_RECORDS = 'taco_appraisal_records_v2';
 const STORAGE_KEY_MONTHS = 'taco_appraisal_months_v2';
@@ -102,11 +102,16 @@ export default function App() {
   const [activeGroupFilter, setActiveGroupFilter] = useState<'ALL' | EmployeeGroup>('ALL');
 
   // Modals state
-  const [isWeightModalOpen, setIsWeightModalOpen] = useState(false);
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>('sheets');
   const [isNewMonthModalOpen, setIsNewMonthModalOpen] = useState(false);
   const [isEmployeeModalOpen, setIsEmployeeModalOpen] = useState(false);
-  const [isGoogleSheetsModalOpen, setIsGoogleSheetsModalOpen] = useState(false);
   const [editingRecord, setEditingRecord] = useState<AppraisalRecord | null>(null);
+
+  const openSettings = (tab: SettingsTab = 'sheets') => {
+    setSettingsTab(tab);
+    setIsSettingsModalOpen(true);
+  };
 
   // Link Google Apps Script URL
   const [appsScriptUrl, setAppsScriptUrl] = useState<string>(() => {
@@ -233,7 +238,7 @@ export default function App() {
     const sheetUrl = spreadsheetUrl.trim();
 
     if (!scriptUrl && !sheetUrl) {
-      if (!isSilent) setIsGoogleSheetsModalOpen(true);
+      if (!isSilent) openSettings('sheets');
       return;
     }
 
@@ -525,11 +530,11 @@ export default function App() {
               </div>
             </div>
 
-            {/* Zone 3: Actions */}
-            <div className="flex items-center gap-2">
+            {/* Zone 3: Actions - Cleaned up to move inputs, weights, buka sheet to Pengaturan */}
+            <div className="flex items-center gap-2.5">
               {isRealTimeEnabled && (appsScriptUrl || spreadsheetUrl) && (
                 <div
-                  className="hidden xl:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-950/60 border border-emerald-800/70 text-emerald-300 text-xs font-mono"
+                  className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-950/60 border border-emerald-800/70 text-emerald-300 text-xs font-mono"
                   title={lastSyncTime ? `Sinkronisasi real-time aktif. Terakhir update: ${lastSyncTime.toLocaleTimeString()}` : 'Sinkronisasi real-time otomatis aktif'}
                 >
                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
@@ -537,77 +542,29 @@ export default function App() {
                 </div>
               )}
 
-              {spreadsheetUrl && (
-                <a
-                  href={spreadsheetUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors border text-emerald-300 bg-emerald-950/70 border-emerald-700/80 hover:bg-emerald-900/80 hover:text-emerald-100"
-                  title="Buka Google Spreadsheet di tab baru"
-                >
-                  <ExternalLink className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Buka Sheet ↗</span>
-                </a>
-              )}
-
-              {(appsScriptUrl || spreadsheetUrl) && (
-                <button
-                  type="button"
-                  onClick={() => handleSyncFromGoogleSheets()}
-                  disabled={isSyncing}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors shadow-2xs border text-cyan-300 bg-cyan-950/70 border-cyan-700/80 hover:bg-cyan-900/80 hover:text-cyan-200"
-                  title="Tarik data nilai terbaru langsung dari Google Sheets"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin text-cyan-400' : 'text-cyan-400'}`} />
-                  <span className="hidden sm:inline">{isSyncing ? 'Menarik...' : 'Sync Nilai'}</span>
-                </button>
-              )}
-
               <button
                 type="button"
-                onClick={() => setIsGoogleSheetsModalOpen(true)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors shadow-2xs border ${
-                  appsScriptUrl || spreadsheetUrl
-                    ? 'text-emerald-300 bg-emerald-950/70 border-emerald-700/80 hover:bg-emerald-900/80 hover:text-emerald-200'
-                    : 'text-indigo-300 bg-indigo-950/70 border-indigo-800/80 hover:bg-indigo-900/80 hover:text-indigo-200'
-                }`}
-                title="Input Link Google Spreadsheet / Apps Script & Real-Time"
+                onClick={() => handleSyncFromGoogleSheets()}
+                disabled={isSyncing}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors shadow-2xs border text-cyan-300 bg-cyan-950/70 border-cyan-700/80 hover:bg-cyan-900/80 hover:text-cyan-200"
+                title="Tarik data nilai terbaru langsung dari Google Sheets"
               >
-                {appsScriptUrl || spreadsheetUrl ? (
-                  <>
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                    <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
-                    <span className="hidden md:inline">Sheets Terhubung</span>
-                    <span className="md:hidden">Sheets</span>
-                  </>
-                ) : (
-                  <>
-                    <Link2 className="w-3.5 h-3.5 text-indigo-400" />
-                    <span className="hidden md:inline">Input Link Sheets</span>
-                    <span className="md:hidden">Link Sheets</span>
-                  </>
+                <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin text-cyan-400' : 'text-cyan-400'}`} />
+                <span className="hidden sm:inline">{isSyncing ? 'Menarik...' : 'Sync Nilai'}</span>
+              </button>
+
+              {/* Tombol Utama Pengaturan: Membuka link sheet, atur bobot, buka sheet, app script */}
+              <button
+                type="button"
+                onClick={() => openSettings('sheets')}
+                className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-slate-200 bg-slate-800/90 hover:bg-slate-700 border border-slate-700 hover:border-slate-600 rounded-lg transition-colors shadow-2xs"
+                title="Buka Pengaturan: Input Link Sheet, Atur Bobot, Buka Sheet, & Kode Apps Script"
+              >
+                <Settings className="w-3.5 h-3.5 text-indigo-400" />
+                <span>Pengaturan</span>
+                {(spreadsheetUrl || appsScriptUrl) && (
+                  <span className="w-2 h-2 rounded-full bg-emerald-400" title="Google Sheets terhubung"></span>
                 )}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setIsWeightModalOpen(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-300 bg-slate-800 border border-slate-700 rounded-lg hover:bg-slate-700/80 hover:text-white transition-colors shadow-2xs"
-              >
-                <Sliders className="w-3.5 h-3.5 text-indigo-400" />
-                <span className="hidden sm:inline">Atur Bobot ({currentMonth.name})</span>
-                <span className="sm:hidden">Bobot</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleClearCurrentMonthScores}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-amber-300 bg-amber-950/60 border border-amber-800/80 rounded-lg hover:bg-amber-900/80 hover:text-amber-100 transition-colors shadow-2xs"
-                title={`Kosongkan nilai penilaian untuk ${currentMonth.name} (tetap 17 anggota tim)`}
-              >
-                <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
-                <span className="hidden xl:inline">Kosongkan Nilai ({currentMonth.name})</span>
-                <span className="xl:hidden">Kosongkan</span>
               </button>
 
               <button
@@ -616,7 +573,7 @@ export default function App() {
                   setEditingRecord(null);
                   setIsEmployeeModalOpen(true);
                 }}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors shadow-2xs"
+                className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors shadow-2xs"
               >
                 <UserPlus className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">Tambah Karyawan</span>
@@ -659,7 +616,7 @@ export default function App() {
         <SummaryStats
           records={records}
           currentMonth={currentMonth}
-          onOpenWeightSettings={() => setIsWeightModalOpen(true)}
+          onOpenWeightSettings={() => openSettings('weights')}
         />
 
         {/* Unified Filter & Employee Selector Bar */}
@@ -794,7 +751,7 @@ export default function App() {
                 setEditingRecord(null);
                 setIsEmployeeModalOpen(true);
               }}
-              onOpenCodeGs={() => setIsGoogleSheetsModalOpen(true)}
+              onOpenCodeGs={() => openSettings('codegs')}
               appsScriptUrl={appsScriptUrl}
               spreadsheetUrl={spreadsheetUrl}
               onSyncFromSheets={() => handleSyncFromGoogleSheets()}
@@ -813,12 +770,21 @@ export default function App() {
           <div className="flex items-center gap-4">
             <button
               type="button"
-              onClick={() => setIsGoogleSheetsModalOpen(true)}
+              onClick={() => openSettings('codegs')}
               className="flex items-center gap-1.5 text-emerald-400 hover:text-emerald-300 transition-colors"
               title="Buka Google Apps Script (Code.gs)"
             >
               <FileSpreadsheet className="w-3.5 h-3.5" />
               <span>Google Apps Script (Code.gs)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => openSettings('sheets')}
+              className="flex items-center gap-1.5 text-indigo-400 hover:text-indigo-300 transition-colors"
+              title="Buka Pengaturan Koneksi Sheets & Bobot"
+            >
+              <Settings className="w-3.5 h-3.5" />
+              <span>Pengaturan &amp; Bobot</span>
             </button>
             <button
               type="button"
@@ -834,12 +800,27 @@ export default function App() {
       </main>
 
       {/* Modals */}
-      <WeightSettingsModal
-        isOpen={isWeightModalOpen}
-        onClose={() => setIsWeightModalOpen(false)}
+      <SettingsModal
+        isOpen={isSettingsModalOpen}
+        onClose={() => setIsSettingsModalOpen(false)}
+        activeTab={settingsTab}
         currentMonth={currentMonth}
         allMonths={months}
+        records={records}
+        appsScriptUrl={appsScriptUrl}
+        onSaveAppsScriptUrl={handleSaveAppsScriptUrl}
+        spreadsheetUrl={spreadsheetUrl}
+        onSaveSpreadsheetUrl={handleSaveSpreadsheetUrl}
+        isRealTimeEnabled={isRealTimeEnabled}
+        onToggleRealTime={handleToggleRealTime}
+        realTimeInterval={realTimeInterval}
+        onChangeRealTimeInterval={handleChangeRealTimeInterval}
+        lastSyncTime={lastSyncTime}
+        onSyncNow={() => handleSyncFromGoogleSheets()}
+        isSyncing={isSyncing}
         onSaveWeights={handleSaveWeights}
+        onClearCurrentMonthScores={handleClearCurrentMonthScores}
+        onResetToOfficial17={handleResetToOfficial17}
       />
 
       <NewMonthModal
@@ -858,26 +839,6 @@ export default function App() {
         recordToEdit={editingRecord}
         currentMonth={currentMonth}
         onSave={handleSaveEmployee}
-      />
-
-      <GoogleSheetsModal
-        isOpen={isGoogleSheetsModalOpen}
-        onClose={() => setIsGoogleSheetsModalOpen(false)}
-        currentMonth={currentMonth}
-        records={records}
-        appsScriptUrl={appsScriptUrl}
-        onSaveAppsScriptUrl={handleSaveAppsScriptUrl}
-        spreadsheetUrl={spreadsheetUrl}
-        onSaveSpreadsheetUrl={handleSaveSpreadsheetUrl}
-        isRealTimeEnabled={isRealTimeEnabled}
-        onToggleRealTime={handleToggleRealTime}
-        realTimeInterval={realTimeInterval}
-        onChangeRealTimeInterval={handleChangeRealTimeInterval}
-        lastSyncTime={lastSyncTime}
-        onSyncNow={() => handleSyncFromGoogleSheets()}
-        isSyncing={isSyncing}
-        onImportRecords={handleImportRecords}
-        onResetToOfficial17={handleResetToOfficial17}
       />
     </div>
   );

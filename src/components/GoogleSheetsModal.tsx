@@ -25,6 +25,7 @@ import {
   Timer,
   Activity,
   Clock,
+  RotateCcw,
 } from 'lucide-react';
 import { AppraisalRecord, MonthConfig } from '../types/appraisal';
 import { fetchFromGoogleSheetGViz } from '../utils/googleSheetsParser';

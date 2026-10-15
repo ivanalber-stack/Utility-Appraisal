@@ -175,68 +175,16 @@ export const AppraisalTable: React.FC<AppraisalTableProps> = ({
           )}
         </div>
 
-        {/* Action buttons */}
+        {/* Action buttons - Cleaned up as requested */}
         <div className="flex items-center gap-2 self-end sm:self-auto flex-wrap">
-          {isRealTimeEnabled && (
+          {isRealTimeEnabled && (appsScriptUrl || spreadsheetUrl) && (
             <div
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-950/60 border border-emerald-800/60 text-emerald-300 text-[11px] font-medium"
-              title={lastSyncTime ? `Sinkronisasi real-time aktif. Terakhir update: ${lastSyncTime.toLocaleTimeString()}` : 'Sinkronisasi real-time otomatis aktif'}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-950/60 border border-emerald-800/60 text-emerald-300 text-[11px] font-medium"
+              title={lastSyncTime ? `Sinkronisasi real-time aktif (${lastSyncTime.toLocaleTimeString()})` : 'Sinkronisasi real-time otomatis'}
             >
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-              <span className="hidden md:inline font-mono text-[10px] uppercase font-bold text-emerald-400">Live</span>
-              <span className="text-[11px] text-emerald-300/90">Real-Time</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+              <span className="font-mono text-[10px] uppercase font-bold text-emerald-400">Live</span>
             </div>
-          )}
-
-          {spreadsheetUrl && (
-            <a
-              href={spreadsheetUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg transition-colors border text-emerald-300 bg-emerald-950/60 border-emerald-700/70 hover:bg-emerald-900/70 hover:text-emerald-100"
-              title="Buka Google Spreadsheet di tab baru"
-            >
-              <ExternalLink className="w-3.5 h-3.5 text-emerald-400" />
-              <span className="hidden sm:inline">Buka Sheet ↗</span>
-            </a>
-          )}
-
-          {onSyncFromSheets && (
-            <button
-              type="button"
-              onClick={onSyncFromSheets}
-              disabled={isSyncing}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors shadow-2xs border ${
-                appsScriptUrl || spreadsheetUrl
-                  ? 'text-cyan-300 bg-cyan-950/70 border-cyan-700/80 hover:bg-cyan-900/80 hover:text-cyan-200'
-                  : 'text-slate-300 bg-slate-800 border-slate-700 hover:bg-slate-700'
-              }`}
-              title={
-                appsScriptUrl || spreadsheetUrl
-                  ? 'Tarik dan perbarui data nilai terbaru langsung dari Google Sheets'
-                  : 'Hubungkan Google Sheets terlebih dahulu'
-              }
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin text-cyan-400' : 'text-cyan-400'}`} />
-              <span>{isSyncing ? 'Menarik Nilai...' : 'Sync Nilai Sheets'}</span>
-            </button>
-          )}
-
-          {onOpenCodeGs && (
-            <button
-              type="button"
-              onClick={onOpenCodeGs}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors shadow-2xs border ${
-                appsScriptUrl || spreadsheetUrl
-                  ? 'text-emerald-300 bg-emerald-950/70 border-emerald-700/80 hover:bg-emerald-900/80'
-                  : 'text-emerald-400 bg-emerald-950/70 border-emerald-800/80 hover:bg-emerald-900/80 hover:text-emerald-300'
-              }`}
-              title={appsScriptUrl ? `Google Apps Script Terhubung: ${appsScriptUrl}` : 'Input Link Google Apps Script / Google Sheets'}
-            >
-              {(appsScriptUrl || spreadsheetUrl) && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>}
-              <FileCode className="w-3.5 h-3.5 text-emerald-400" />
-              <span>{appsScriptUrl ? 'Apps Script Terhubung' : 'Link Google Sheets'}</span>
-            </button>
           )}
           <button
             type="button"
